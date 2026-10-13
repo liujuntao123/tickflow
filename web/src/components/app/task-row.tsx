@@ -6,7 +6,7 @@ import { useUiStore } from '@/lib/ui-store';
 import { PRIORITY_COLORS, TASK_STATUS } from '@/lib/constants';
 import { cn, colorToHex, dueTone, effectiveDue, formatDue } from '@/lib/utils';
 import { IconButton } from '@/components/ui';
-import type { ReactNode } from 'react';
+import { memo, useMemo, type ReactNode } from 'react';
 import type { Tag, Task } from '@/lib/types';
 
 export type SubtaskCount = { total: number; done: number };
@@ -18,7 +18,7 @@ const dueToneClass: Record<string, string> = {
   normal: 'text-zinc-500 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-400',
 };
 
-export function TaskRow({
+function TaskRowInner({
   task,
   tags,
   subtaskCounts,
@@ -29,7 +29,8 @@ export function TaskRow({
   subtaskCounts: Map<string, SubtaskCount>;
   dragHandle?: ReactNode;
 }) {
-  const selectedTaskId = useUiStore((s) => s.selectedTaskId);
+  // 只订阅“本行是否选中”，避免选中某行时 500 行全部重渲染
+  const selected = useUiStore((s) => s.selectedTaskId === task.id);
   const selectTask = useUiStore((s) => s.selectTask);
   const toggle = useToggleTask();
   const remove = useDeleteTask();
@@ -37,12 +38,11 @@ export function TaskRow({
   const completed = task.status === TASK_STATUS.COMPLETED;
   const due = effectiveDue(task);
   const tone = dueTone(due);
-  const tagMap = new Map(tags.map((t) => [t.id, t]));
+  const tagMap = useMemo(() => new Map(tags.map((t) => [t.id, t])), [tags]);
   const taskTags = (task.tagIds ?? []).map((id) => tagMap.get(id)).filter((t): t is Tag => !!t);
   const checklist = task.checklist ?? [];
   const checklistDone = checklist.filter((c) => c.checked).length;
   const childStat = subtaskCounts.get(task.id);
-  const selected = selectedTaskId === task.id;
 
   return (
     <div
@@ -53,7 +53,7 @@ export function TaskRow({
         if (e.key === 'Enter') selectTask(task.id);
       }}
       className={cn(
-        'group flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40',
+        'tf-cv-row group flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40',
         selected
           ? 'border-brand-200 bg-brand-50/70 dark:border-brand-500/40 dark:bg-brand-500/10'
           : 'border-transparent hover:border-zinc-200 hover:bg-white hover:shadow-sm dark:hover:border-zinc-800 dark:hover:bg-zinc-800/50',
@@ -152,3 +152,6 @@ export function TaskRow({
     </div>
   );
 }
+
+/** 大列表下避免无关重渲染；props 均为稳定引用（task 仅在数据变化时更新）。 */
+export const TaskRow = memo(TaskRowInner);

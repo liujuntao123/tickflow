@@ -76,4 +76,28 @@
   .tf-fade-in {
     animation: tf-fade-in 0.18s ease-out;
   }
+
+  /*
+   * 长列表渲染优化：让浏览器跳过屏外行的布局 / 绘制。
+   * `contain-intrinsic-size: auto <len>` 会记住元素上次渲染的真实尺寸，
+   * 首次之后不再使用估算值，避免滚动条跳动与命中测试偏差。
+   */
+  .tf-cv-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 44px;
+  }
+  .tf-cv-group {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px;
+  }
+
+  /*
+   * 拖拽排序期间关闭上述优化，避免 dnd-kit 命中测试读到屏外行的估算尺寸。
+   * 由于 contain-intrinsic-size 使用 `auto`（已渲染过的行记录真实高度），
+   * 切换时不会产生可见的布局跳动。
+   */
+  .tf-dragging .tf-cv-row,
+  .tf-dragging .tf-cv-group {
+    content-visibility: visible;
+  }
 }

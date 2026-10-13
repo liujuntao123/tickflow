@@ -223,6 +223,7 @@ function Shell({
   const reorder = useReorderTasks();
 
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [dragging, setDragging] = useState(false);
 
   const visibleTasks = useMemo(
     () => (tagFilter.length === 0 ? tasks : tasks.filter((t) => (t.tagIds ?? []).some((id) => tagFilter.includes(id)))),
@@ -261,7 +262,7 @@ function Shell({
   const grouped = (
     <div className="pb-2">
       {groups.map((group) => (
-        <div key={group.key} className="mb-4">
+        <div key={group.key} className="tf-cv-group mb-4">
           {!suppressTitle && (
             <div className="mb-1.5 flex items-center gap-2 px-1">
               <span className="text-[12px] font-semibold text-zinc-400">{group.label}</span>
@@ -374,7 +375,7 @@ function Shell({
           </div>
         )}
 
-        <div className="tf-scroll flex-1 overflow-y-auto px-5 py-3">
+        <div className={cn('tf-scroll flex-1 overflow-y-auto px-5 py-3', dragging && 'tf-dragging')}>
           {isLoading ? (
             <div className="flex h-40 items-center justify-center">
               <Spinner className="h-5 w-5" />
@@ -386,7 +387,16 @@ function Shell({
           ) : groups.length === 0 ? (
             <EmptyState icon={emptyIcon} title={emptyTitle} description={emptyDesc} />
           ) : (
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={() => setDragging(true)}
+              onDragCancel={() => setDragging(false)}
+              onDragEnd={(event) => {
+                setDragging(false);
+                handleDragEnd(event);
+              }}
+            >
               {grouped}
             </DndContext>
           )}

@@ -1,5 +1,6 @@
 'use client';
 
+import { memo } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical } from 'lucide-react';
@@ -7,7 +8,7 @@ import { TaskRow, type SubtaskCount } from './task-row';
 import { cn } from '@/lib/utils';
 import type { Tag, Task } from '@/lib/types';
 
-export function SortableTaskRow({
+export const SortableTaskRow = memo(function SortableTaskRow({
   task,
   tags,
   subtaskCounts,
@@ -46,4 +47,4 @@ export function SortableTaskRow({
       />
     </div>
   );
-}
+});
