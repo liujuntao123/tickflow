@@ -71,3 +71,21 @@ git tag v1.0.0 && git push origin v1.0.0
 - [docs/releasing.md](docs/releasing.md) — 发版流程、签名、工作流
 - [docs/sync-design.md](docs/sync-design.md) — 同步协议与不变量
 - [docs/ux-reference.md](docs/ux-reference.md) — 端侧界面结构与设计取向
+
+## 后续路线（P2+，均未开工）
+
+- Web Push（自托管 VAPID，替代「页面打开才通知」）
+- 回收站 UI、CSV/JSON 导入导出
+- 专注/习惯统计细化（按清单/标签聚合、月视图）
+- WS 变更推送（当前为拉取式增量，`/ws` 为预留位）
+- 协作共享、附件、Android 桌面小组件、看板视图
+
+## 开发约定（改代码前请先读）
+
+- **同步不变量**：所有写路径必须经由 `withSync` 分配 seq（事务开头行锁）——见 [docs/sync-design.md](docs/sync-design.md)
+- **重复任务**：完成滚动只在服务端（REST 与 `/sync` 共用 `rollRecurringTask`），客户端只消费结果
+- **JSON 约定**：BigInt（seq / sortOrder）一律序列化为字符串；智能清单与四象限规则常量的唯一来源是 `packages/contracts/src/`
+- **限流**：仅 auth 路由有限制（登录/注册 5 次/分钟）；业务 API 不做全局限流（避免误伤前端请求风暴）
+- **提交前门槛**：`node scripts/smoke.mjs`（85 项）、`node server/test/rrule-vectors.mjs`（23 项）；Android 改动跑 `cd android && ./gradlew :app:assembleDebug`
+- **发版**：`git tag vX.Y.Z && git push origin vX.Y.Z` → 自动产出签名 APK 与 GHCR 镜像
+- **勿入库**：`.env`、`data/`、keystore（签名文件在 `C:\Users\admin\tools\tickflow-keystore\`，仓库外双备份）
