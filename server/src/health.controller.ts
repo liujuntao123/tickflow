@@ -1,10 +1,12 @@
 import { Controller, Get } from '@nestjs/common';
 import { PrismaService } from './prisma.service';
+import { Public } from './common/decorators';
 
 @Controller()
 export class HealthController {
   constructor(private readonly prisma: PrismaService) {}
 
+  @Public()
   @Get('healthz')
   async health() {
     let db = 'down';

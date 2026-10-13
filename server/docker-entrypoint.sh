@@ -14,5 +14,8 @@ until ./node_modules/.bin/prisma migrate deploy; do
   sleep 3
 done
 
+echo "[tickflow] seeding habit templates..."
+node prisma/seed.js || echo "[tickflow] seed skipped (non-fatal)"
+
 echo "[tickflow] starting server..."
 exec node dist/main.js

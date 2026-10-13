@@ -17,6 +17,7 @@ COPY packages ./packages
 COPY server ./server
 
 RUN pnpm --filter @tickflow/contracts build \
+ && rm -f server/tsconfig.tsbuildinfo \
  && pnpm --filter @tickflow/server exec prisma generate \
  && pnpm --filter @tickflow/server build
 

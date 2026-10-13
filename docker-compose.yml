@@ -12,6 +12,9 @@ services:
     volumes:
       # postgres:18+ 镜像要求单挂载点 /var/lib/postgresql（数据落在其子目录）
       - ./data/postgres:/var/lib/postgresql
+    ports:
+      # 仅本机开发用（便于 pnpm dev:server 直连）
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tickflow} -d ${POSTGRES_DB:-tickflow}"]
       interval: 10s
