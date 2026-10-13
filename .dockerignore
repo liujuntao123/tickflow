@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+.git
+.github
+android
+data
+docs
+scripts
+.env
+.env.*
+*.log
+.next
+**/.next
+dist
+**/dist
+.idea
+.trae

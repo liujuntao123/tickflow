@@ -1,0 +1,332 @@
+// TickFlow 数据模型
+// 同步基建：所有可同步实体统一带 seq / updatedAt / deletedAt，索引 (user_id, seq)
+// seq 由 SyncSeqAllocator 在事务内（事务开头 FOR UPDATE 行锁）分配，保证「分配序 = 提交序」
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- 账号与同步基建 ----------
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  displayName  String    @map("display_name")
+  timezone     String    @default("Asia/Shanghai")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(3)
+
+  syncState     UserSyncState?
+  refreshTokens RefreshToken[]
+  devices       Device[]
+  folders       Folder[]
+  lists         List[]
+  tags          Tag[]
+  tasks         Task[]
+  taskTags      TaskTag[]
+  occurrences   TaskOccurrence[]
+  habits        Habit[]
+  habitRecords  HabitRecord[]
+  focusSessions FocusSession[]
+  setting       UserSetting?
+
+  @@map("users")
+}
+
+model UserSyncState {
+  userId    String   @id @map("user_id") @db.Uuid
+  seq       BigInt   @default(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sync_state")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  tokenHash    String    @unique @map("token_hash")
+  deviceId     String    @map("device_id")
+  platform     String
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  replacedById String?   @map("replaced_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(3)
+  userAgent    String?   @map("user_agent")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+model Device {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  deviceId   String    @map("device_id")
+  platform   String
+  appVersion String?   @map("app_version")
+  pushToken  String?   @map("push_token")
+  lastSyncAt DateTime? @map("last_sync_at") @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@map("devices")
+}
+
+// ---------- 组织维度 ----------
+
+model Folder {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  name      String
+  color     Int?
+  sortOrder BigInt    @default(0) @map("sort_order")
+  seq       BigInt    @default(0)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lists     List[]
+
+  @@index([userId, seq])
+  @@map("folders")
+}
+
+model List {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  folderId   String?   @map("folder_id") @db.Uuid
+  name       String
+  color      Int?
+  icon       String?
+  isInbox    Boolean   @default(false) @map("is_inbox")
+  isArchived Boolean   @default(false) @map("is_archived")
+  sortOrder  BigInt    @default(0) @map("sort_order")
+  seq        BigInt    @default(0)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(3)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder     Folder?   @relation(fields: [folderId], references: [id])
+  tasks      Task[]
+
+  @@index([userId, seq])
+  @@index([userId, folderId, sortOrder])
+  @@map("lists")
+}
+
+model Tag {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  name      String
+  color     Int?
+  sortOrder BigInt    @default(0) @map("sort_order")
+  seq       BigInt    @default(0)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks     TaskTag[]
+
+  @@index([userId, seq])
+  @@map("tags")
+}
+
+// ---------- 任务 ----------
+
+model Task {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  listId String? @map("list_id") @db.Uuid
+  parentId String? @map("parent_id") @db.Uuid
+
+  title    String
+  notes    String?
+  priority Int     @default(0) // 0=无 1=低 3=中 5=高
+  status   Int     @default(0) // 0=未完成 2=已完成
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+
+  dueDate   DateTime? @map("due_date") @db.Timestamptz(3)
+  isAllDay  Boolean   @default(false) @map("is_all_day")
+  startDate DateTime? @map("start_date") @db.Timestamptz(3)
+  timezone  String?
+
+  recurrenceRule    String?   @map("recurrence_rule")
+  recurrenceTz      String?   @map("recurrence_tz")
+  recurrenceDtstart DateTime? @map("recurrence_dtstart") @db.Timestamptz(3)
+  recurrenceEnd     DateTime? @map("recurrence_end") @db.Timestamptz(3)
+  repeatFrom        Int       @default(0) @map("repeat_from") // 0=按截止日 1=按完成日
+  nextDueDate       DateTime? @map("next_due_date") @db.Timestamptz(3)
+
+  reminders             Json?
+  reminderRepeatMinutes Int?  @map("reminder_repeat_minutes")
+  checklist             Json?
+
+  sortOrder BigInt    @default(0) @map("sort_order")
+  seq       BigInt    @default(0)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  list       List?            @relation(fields: [listId], references: [id])
+  parent     Task?            @relation("TaskSubtasks", fields: [parentId], references: [id])
+  children   Task[]           @relation("TaskSubtasks")
+  tags       TaskTag[]
+  occurrences TaskOccurrence[]
+
+  @@index([userId, seq])
+  @@index([userId, listId, status, sortOrder])
+  @@index([userId, parentId])
+  @@index([userId, status, dueDate])
+  @@index([userId, status, nextDueDate])
+  @@map("tasks")
+}
+
+model TaskTag {
+  taskId    String   @map("task_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@index([userId, tagId])
+  @@map("task_tags")
+}
+
+model TaskOccurrence {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  taskId         String   @map("task_id") @db.Uuid
+  occurrenceDate DateTime @map("occurrence_date") @db.Timestamptz(3)
+  completedAt    DateTime @map("completed_at") @db.Timestamptz(3)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, occurrenceDate])
+  @@index([userId, completedAt])
+  @@map("task_occurrences")
+}
+
+// ---------- 习惯 / 专注 / 设置 ----------
+
+model Habit {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  name        String
+  icon        String?
+  color       Int?
+  goalType    Int       @default(0) @map("goal_type") // 0=计数目标 1=纯打卡
+  targetValue Int       @default(1) @map("target_value")
+  unit        String?
+  frequency   Int       @default(0) // 0=每天 1=每周指定 2=每月 3=自定义RRULE
+  weekDays    Int[]     @map("week_days")
+  repeatRule  String?   @map("repeat_rule")
+  startDate   DateTime  @map("start_date") @db.Date
+  reminders   Json?
+  archived    Boolean   @default(false)
+  sortOrder   BigInt    @default(0) @map("sort_order")
+  seq         BigInt    @default(0)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  records     HabitRecord[]
+
+  @@index([userId, seq])
+  @@map("habits")
+}
+
+model HabitRecord {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  habitId   String    @map("habit_id") @db.Uuid
+  date      DateTime  @db.Date
+  value     Int       @default(1)
+  note      String?
+  seq       BigInt    @default(0)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(3)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  habit     Habit     @relation(fields: [habitId], references: [id], onDelete: Cascade)
+
+  @@unique([habitId, date])
+  @@index([userId, seq])
+  @@index([userId, habitId, date])
+  @@map("habit_records")
+}
+
+model HabitTemplate {
+  id                 String  @id // 稳定 slug，如 "read-30min"
+  title              String
+  icon               String
+  color              Int
+  category           String
+  defaultGoalType    Int     @map("default_goal_type")
+  defaultTargetValue Int     @map("default_target_value")
+  defaultUnit        String? @map("default_unit")
+  frequency          Int
+  sortOrder          Int     @map("sort_order")
+
+  @@map("habit_templates")
+}
+
+model FocusSession {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  taskId         String?   @map("task_id") @db.Uuid
+  mode           Int       @default(0) // 0=番茄 1=正计时 2=倒计时
+  plannedSeconds Int       @map("planned_seconds")
+  startedAt      DateTime  @map("started_at") @db.Timestamptz(3)
+  endedAt        DateTime? @map("ended_at") @db.Timestamptz(3)
+  actualSeconds  Int       @default(0) @map("actual_seconds")
+  breakSeconds   Int       @default(0) @map("break_seconds")
+  pauseCount     Int       @default(0) @map("pause_count")
+  status         Int       @default(0) // 0=进行中 1=暂停 2=完成 3=取消
+  interrupted    Boolean   @default(false)
+  note           String?
+  seq            BigInt    @default(0)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(3)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, seq])
+  @@index([userId, startedAt])
+  @@map("focus_sessions")
+}
+
+model UserSetting {
+  userId         String   @id @map("user_id") @db.Uuid
+  theme          String   @default("system") // light | dark | system
+  weekStart      Int      @default(1) @map("week_start")
+  dayStartHour   Int      @default(0) @map("day_start_hour")
+  dateFormat     String   @default("yyyy-MM-dd") @map("date_format")
+  modulePomodoro Boolean  @default(true) @map("module_pomodoro")
+  moduleHabits   Boolean  @default(true) @map("module_habits")
+  moduleMatrix   Boolean  @default(true) @map("module_matrix")
+  moduleCalendar Boolean  @default(true) @map("module_calendar")
+  smartListsVisible String[] @default(["inbox", "today", "next7", "completed", "all"]) @map("smart_lists_visible")
+  defaultListId  String?  @map("default_list_id") @db.Uuid
+  defaultPriority Int     @default(0) @map("default_priority")
+  defaultReminderOffset Int? @map("default_reminder_offset")
+  focusSettings  Json?    @map("focus_settings")
+  seq            BigInt   @default(0)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}

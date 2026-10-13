@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.next/
+out/
+.env
+.env.*.local
+data/
+*.log
+.DS_Store
+.turbo/
+coverage/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+*.apk
+*.aab
+keystore/
+*.jks
+*.keystore
+
+# Prisma
+server/prisma/*.db

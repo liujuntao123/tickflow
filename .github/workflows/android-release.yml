@@ -1,0 +1,130 @@
+name: Android Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号，不含 v（如 0.1.0）'
+        required: true
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      code: ${{ steps.v.outputs.code }}
+      prerelease: ${{ steps.v.outputs.pre }}
+    steps:
+      - id: v
+        shell: bash
+        env:
+          DISPATCH: ${{ inputs.version }}
+          REF: ${{ github.ref_name }}
+          RUN: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          V="${DISPATCH:-${REF#v}}"; V="${V#v}"
+          if ! [[ "$V" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::invalid version: $V"; exit 1
+          fi
+          CORE="${V%%-*}"
+          IFS=. read -r MA MI PA <<< "$CORE"
+          CODE=$((MA*10000 + MI*100 + PA))
+          if [[ "$V" == *-* ]]; then CODE=$((CODE + RUN % 100)); PRE=true; else PRE=false; fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          echo "pre=$PRE" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Install Android SDK packages
+        run: |
+          set -euo pipefail
+          SDKM="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)"
+          yes | "$SDKM" --licenses >/dev/null 2>&1 || true
+          "$SDKM" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Inject keystore
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          mkdir -p android/keystore
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/keystore/tickflow-release.jks
+          echo "ANDROID_KEYSTORE_PATH=$GITHUB_WORKSPACE/android/keystore/tickflow-release.jks" >> "$GITHUB_ENV"
+
+      - name: Assemble release
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          VERSION_NAME: ${{ needs.resolve.outputs.version }}
+          VERSION_CODE: ${{ needs.resolve.outputs.code }}
+        run: |
+          set -euo pipefail
+          if [ -f ./gradlew ]; then chmod +x ./gradlew; G="./gradlew"; else G="gradle"; fi
+          $G :app:assembleRelease --no-daemon --stacktrace \
+            -PversionName="$VERSION_NAME" -PversionCode="$VERSION_CODE"
+
+      - name: Verify and rename APK
+        id: apk
+        working-directory: android
+        run: |
+          set -euo pipefail
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          APK="$(find app/build/outputs/apk/release -name '*.apk' | head -1)"
+          "$BT/apksigner" verify --print-certs "$APK" | tee certs.txt
+          V="${{ needs.resolve.outputs.version }}"
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then SUFFIX=""; else SUFFIX="-debugsigned"; fi
+          OUT="tickflow-v${V}${SUFFIX}.apk"
+          cp "$APK" "$OUT"
+          echo "path=android/$OUT" >> "$GITHUB_OUTPUT"
+          {
+            echo "APK: \`$OUT\`"
+            echo
+            if [ -n "$SUFFIX" ]; then
+              echo "> 注意：本次构建未配置正式签名密钥（debug 签名，仅用于自测）。"
+              echo
+            fi
+            echo '```'
+            cat certs.txt
+            echo '```'
+          } > release-body.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tickflow-apk
+          path: ${{ steps.apk.outputs.path }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.resolve.outputs.version) }}
+          name: TickFlow v${{ needs.resolve.outputs.version }}
+          prerelease: ${{ needs.resolve.outputs.prerelease }}
+          body_path: android/release-body.md
+          files: ${{ steps.apk.outputs.path }}
