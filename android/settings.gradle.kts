@@ -1,9 +1,11 @@
 pluginManagement {
     repositories {
-        // 国内镜像优先（本机访问 maven.google.com 受限），官方源兜底
-        maven("https://maven.aliyun.com/repository/gradle-plugin")
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/central")
+        // 本机（无 CI 环境变量）访问 maven.google.com 受限 → 优先阿里云镜像；CI runner 直连官方源更快
+        if (System.getenv("CI").isNullOrEmpty()) {
+            maven("https://maven.aliyun.com/repository/gradle-plugin")
+            maven("https://maven.aliyun.com/repository/google")
+            maven("https://maven.aliyun.com/repository/central")
+        }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -13,8 +15,10 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/central")
+        if (System.getenv("CI").isNullOrEmpty()) {
+            maven("https://maven.aliyun.com/repository/google")
+            maven("https://maven.aliyun.com/repository/central")
+        }
         google()
         mavenCentral()
     }
