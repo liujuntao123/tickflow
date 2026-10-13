@@ -13,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -47,6 +48,7 @@ fun TasksScreen(
     onOpenDrawer: () -> Unit,
     onOpenTask: (String) -> Unit,
     onSync: () -> Unit,
+    onOpenMatrix: (() -> Unit)? = null,
 ) {
     val tasks by viewModel.tasks.collectAsStateWithLifecycle()
     val title by viewModel.title.collectAsStateWithLifecycle()
@@ -78,6 +80,11 @@ fun TasksScreen(
                         IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, contentDescription = "菜单") }
                     },
                     actions = {
+                        if (onOpenMatrix != null) {
+                            IconButton(onClick = onOpenMatrix) {
+                                Icon(Icons.Filled.GridView, contentDescription = "四象限")
+                            }
+                        }
                         IconButton(onClick = onSync) { Icon(Icons.Filled.Sync, contentDescription = "同步") }
                     },
                 )

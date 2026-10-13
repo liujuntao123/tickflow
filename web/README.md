@@ -1,6 +1,6 @@
 # @tickflow/web
 
-TickFlow 的 Web 桌面端（Next.js 15 App Router + React 19），滴答清单风格的复刻实现，当前为 **M2**。
+TickFlow 的 Web 桌面端（Next.js 15 App Router + React 19），滴答清单风格的复刻实现，当前为 **M3**。
 
 ## 技术要点
 
@@ -19,19 +19,24 @@ src/
       today|inbox|tomorrow|next7|all|completed
       list/[id]  folder/[id]  tag/[id]  search  settings
       calendar                          月 / 议程视图
-      focus|habits|matrix               占位页（后续里程碑）
+      focus                             番茄专注（环形计时 / 时长配置 / 统计）
+      habits                            习惯打卡（模板库 / 热力图 / 连续天数）
+      matrix                            四象限（拖拽调优先级）
     api/backend/[...path]/route.ts      后端代理
     api/health/route.ts                 容器健康检查
     providers.tsx                       QueryClient + 会话引导 + 主题初始化
   components/
     ui.tsx                             基础组件（Button/Input/Modal/Dropdown…）
+    toast-host.tsx                      轻提示
     app/                               侧边栏、任务行、快速添加、详情面板、工作区、
                                        重复/提醒选择器、检查项编辑、TipTap 富文本、
-                                       日历视图、拖拽行…
+                                       日历视图、专注页、习惯页、四象限、模块守卫…
   lib/
     api.ts  session.ts  theme.ts  ui-store.ts  types.ts  utils.ts  grouping.ts
     rrule.ts                            重复规则构建/解析/展开
+    focus-settings.ts                   番茄配置解析与格式化
     notifications.ts                    页内到期通知
+    toast.ts                            轻提示 store
     hooks/                             react-query hooks
 ```
 
@@ -73,11 +78,13 @@ docker compose ps                    # web 应显示 healthy
 2. `pnpm --filter @tickflow/web dev` 后经 `http://127.0.0.1:3001/api/backend` 走一遍注册 → 登录 → 建清单 → 建任务 → 查 `views/counts`；确认 web 平台响应体**不含** `refreshToken`，且已种下 `tf_rt` cookie。
 3. `docker compose build web && docker compose up -d web` 后 `docker compose ps` 为 healthy，`http://127.0.0.1:8080/api/backend/healthz` 与首页均返回 200。
 
-## 已知限制（M2）
+## 已知限制（M3）
 
 - 智能清单的**分组切换在客户端完成**（服务端按清单返回，前端再按日期/优先级/四象限重排）；四象限规则：重要 = `priority ∈ {3,5}`，紧急 = 有效到期 ≤ 明天结束。
-- **拖拽排序**仅在“按清单”分组下启用（同一清单内重排）；侧栏清单支持**同一容器内**拖拽，跨文件夹移动未做。
+- **拖拽排序**仅在“按清单”分组下启用（同一清单内重排）；侧栏清单支持**同一容器内**拖拽，跨文件夹移动未做；四象限拖拽**只改优先级**（重要→P5、不重要→P1）。
 - **标签筛选**为「任一命中」（OR），纯前端过滤。
 - 重复任务的滚动由后端完成（响应 `rolled: true` + 新 `nextDueDate`），前端只做缓存更新；日历以服务端展开的 `occurrenceDate` 为准，仅在旧版后端不展开时用 `src/lib/rrule.ts` 端上兜底。
-- 专注 / 习惯 / 四象限仍为占位页，留待后续里程碑。
+- 专注页的休息段为**端上计时**（不落库），仅专注会话写入后端；刷新页面时按 `GET /focus/sessions/current` + 本地快照恢复。
+- 习惯热力图使用 `stats.days`（仅含已打卡日），色阶按 `value / targetValue` 分 4 档。
+- 模块开关关闭后仅隐藏入口并重定向，数据不做清理。
 - `packages/contracts` 的常量在 `src/lib/constants.ts` 做了本地镜像，避免 web 构建依赖其编译产物。

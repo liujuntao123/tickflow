@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useSession } from '@/lib/session';
 import { useDueNotifications } from '@/lib/notifications';
 import { Sidebar } from '@/components/app/sidebar';
+import { ToastHost } from '@/components/toast-host';
 import { Spinner } from '@/components/ui';
 
 /** 仅登录后挂载：页面打开期间每分钟检查即将到期的任务。 */
@@ -34,6 +35,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <NotificationWatcher />
       <Sidebar />
       <main className="flex min-w-0 flex-1">{children}</main>
+      <ToastHost />
     </div>
   );
 }

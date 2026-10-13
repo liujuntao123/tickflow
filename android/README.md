@@ -141,3 +141,56 @@ app/src/main/java/com/tickflow/app/
 7. **电池优化**：设置 → 提醒与权限 → 电池优化 → 「去设置」加入白名单；加入后状态显示「已加入白名单」。
 
 > 模拟器（API 33+）同样可验证 1–3、5、6；`10.0.2.2` 指向宿主机后端。
+
+## M3 范围（专注 / 习惯 / 四象限）
+
+这三个模块走 **REST 在线优先**（进入页面拉取 + 操作后刷新/乐观更新），不接入 `/sync` 离线通道；
+任务模块的离线能力保持不变。
+
+### 番茄专注（`feature/focus`）
+
+- 自绘圆环倒计时；开始/暂停/继续/完成/放弃；短休息/长休息自动衔接（长休息按「每 N 个番茄」）。
+- 配置面板读写 `settings.focusSettings`（键与 Web 端 `focus-settings.ts` 一致：`focusMinutes / shortBreakMinutes /
+  longBreakMinutes / longBreakEvery / autoStartNext`），快捷值 25/45/60。
+- 会话生命周期对齐 REST：开始 `POST /focus/sessions`、暂停/继续 `PATCH {pause|resume}`、
+  完成 `PATCH {complete, actualSeconds, breakSeconds}`、放弃 `PATCH {cancel}`；
+  进程被杀后重启 → `GET /focus/sessions/current` 按 `startedAt` 恢复剩余时间与界面状态。
+- **前台服务** `FocusTimerService`（`foregroundServiceType="specialUse"`）：常驻通知显示剩余时间，
+  带「暂停/继续」「放弃」两个 action；计时结束/放弃即停止。权限：`FOREGROUND_SERVICE` +
+  `FOREGROUND_SERVICE_SPECIAL_USE`。计时权威在 `FocusViewModel`（活动级共享，切换 Tab 不中断），
+  服务仅负责渲染与转发按钮事件（进程内 `FocusTimerController` 桥接）。
+- 统计：今日总时长/番茄数 + 近 7 天柱状图（自绘），来自 `GET /focus/stats`。
+  注意 `to` 传「明天本地零点」而非 UTC 零点，否则会漏掉当天的会话。
+
+### 习惯打卡（`feature/habits`）
+
+- 卡片列表：emoji/颜色、今日打卡（纯打卡型开关；计数型逐次 +1 至目标，达标后再点重置）、
+  当前/最长连续天数、近 12 周热力图（4 档色阶，自绘）。
+- 新建：模板库网格（`GET /habit-templates`）或自定义（名称/emoji/颜色/目标类型/目标值+单位/
+  频率：每天或每周指定星期）；编辑、归档、删除（均带确认）。
+- 打卡乐观更新 + 失败回滚并提示。数据：`GET /habits`（近 30 天记录）+ `GET /habits/stats`
+  （连续天数与区间每日值）。习惯记录日期按「本地日历日 → UTC 零点」编码，与服务端 `todayKey(tz)` 对齐。
+
+### 四象限（`feature/matrix`）
+
+- 2×2 象限（重要且紧急 / 重要不紧急 / 紧急不重要 / 不重要不紧急），象限内任务列表复用任务行组件，点击进详情。
+- **拖拽跨象限只改优先级**：拖入「重要」两象限 → `priority=5`；拖入「不重要」→ `priority=1`；
+  紧急维度由到期日推导（有效到期 < 今天日界 + 2 天，即「≤ 明天」），不可直接编辑。顶部显示计数与规则说明。
+- 数据走任务模块既有本地 Room（已有同步），不额外拉 REST。
+- 入口：任务页顶栏的「四象限」图标（底部导航保持 任务/日历/专注/习惯/更多 五项不变，故四象限不占 Tab）。
+
+### 功能模块开关
+
+设置页「功能模块」→ `PUT /settings`（`modulePomodoro/moduleHabits/moduleMatrix/moduleCalendar`）；
+关闭后底部导航对应项隐藏（番茄→专注、习惯→习惯、日历→日历），四象限入口隐藏；
+直接进入被关闭的页面（含深链/通知）会退回任务页。
+
+## 真机验证清单（M3）
+
+1. **番茄**：专注页开始 → 通知栏出现常驻倒计时（带「暂停/放弃」）；锁屏后仍走动；
+   在通知里点暂停/放弃应同步到界面；倒计时结束后按配置自动进入短/长休息。
+2. **进程被杀恢复**：专注中杀掉 App（从最近任务划掉）后重新打开，应恢复剩余时间与进行中状态。
+3. **习惯**：新建（模板/自定义）→ 打卡（计数型连点至目标）→ 连续天数与热力图更新；
+   断网打卡应提示失败并回滚。
+4. **四象限**：长按任务拖到另一象限松手，优先级按规则变化（重要→高、不重要→低），任务移入目标象限。
+5. **模块开关**：设置页关闭「习惯」→ 底部导航「习惯」消失；再打开恢复。

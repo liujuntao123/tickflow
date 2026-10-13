@@ -72,6 +72,20 @@ export function formatDayLabel(d: Date): string {
   return format(d, isThisYear(d) ? 'M月d日' : 'yyyy年M月d日', { locale: zhCN });
 }
 
+/** 按用户时区取本地日期键（YYYY-MM-DD），与服务端 todayKey 对齐。 */
+export function localDateKey(date: Date, timezone?: string | null): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone || 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    return format(date, 'yyyy-MM-dd');
+  }
+}
+
 /** datetime-local 输入框需要本地时间的 YYYY-MM-DDTHH:mm。 */
 export function toDatetimeLocal(d: Date | null): string {
   if (!d) return '';

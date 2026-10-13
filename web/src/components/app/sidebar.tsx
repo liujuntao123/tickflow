@@ -26,11 +26,13 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Flame,
   Folder as FolderIcon,
   GripVertical,
   Hash,
   Inbox,
   Layers,
+  LayoutGrid,
   LogOut,
   MoreHorizontal,
   Pencil,
@@ -38,6 +40,7 @@ import {
   Search,
   Settings,
   Sun,
+  Timer,
   Trash2,
 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -54,6 +57,7 @@ import {
   useUpdateTag,
 } from '@/lib/hooks/use-org';
 import { useViewCounts } from '@/lib/hooks/use-views';
+import { useSettings } from '@/lib/hooks/use-settings';
 import { logout } from '@/lib/hooks/use-auth';
 import { useSession } from '@/lib/session';
 import { cn, colorToHex, initialOf } from '@/lib/utils';
@@ -71,6 +75,13 @@ const SMART_ITEMS = [
   { key: 'completed', href: '/completed', label: '已完成', icon: CheckCircle2, countKey: null },
 ];
 
+const MODULE_NAV = [
+  { key: 'moduleCalendar' as const, href: '/calendar', label: '日历', icon: CalendarDays },
+  { key: 'modulePomodoro' as const, href: '/focus', label: '专注', icon: Timer },
+  { key: 'moduleHabits' as const, href: '/habits', label: '习惯打卡', icon: Flame },
+  { key: 'moduleMatrix' as const, href: '/matrix', label: '四象限', icon: LayoutGrid },
+];
+
 type EntityKind = 'folder' | 'list' | 'tag';
 
 export function Sidebar() {
@@ -81,6 +92,7 @@ export function Sidebar() {
   const clearSession = useSession((s) => s.clear);
 
   const { data: counts } = useViewCounts();
+  const { data: settings } = useSettings();
   const { data: folders = [] } = useFolders();
   const { data: lists = [] } = useLists();
   const { data: tags = [] } = useTags();
@@ -107,6 +119,8 @@ export function Sidebar() {
     [tags],
   );
   const sortedLists = (arr: TaskList[]) => [...arr].sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder));
+
+  const moduleItems = useMemo(() => MODULE_NAV.filter((item) => settings?.[item.key] !== false), [settings]);
 
   const reorderLists = useReorderLists();
   const sensors = useSensors(
@@ -318,6 +332,35 @@ export function Sidebar() {
             );
           })}
         </ul>
+
+        {/* 功能模块（按设置开关显隐） */}
+        {moduleItems.length > 0 && (
+          <div>
+            <div className="mb-1 px-2.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">更多</div>
+            <ul className="space-y-0.5">
+              {moduleItems.map((item) => {
+                const Icon = item.icon;
+                const active = pathname === item.href;
+                return (
+                  <li key={item.key}>
+                    <Link
+                      href={item.href}
+                      className={cn(
+                        'flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] transition-colors',
+                        active
+                          ? 'bg-brand-50 font-medium text-brand-700 dark:bg-brand-500/10 dark:text-brand-300'
+                          : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
+                      )}
+                    >
+                      <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-brand-500' : 'text-zinc-400')} />
+                      <span className="flex-1 truncate">{item.label}</span>
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
 
         {/* 文件夹 / 清单 */}
         <div>

@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { Body, Controller, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { CurrentUser, Public } from '../../common/decorators';
 import { ZodValidationPipe } from '../../common/zod-validation.pipe';
@@ -7,6 +7,7 @@ import { AuthService, REFRESH_COOKIE } from './auth.service';
 import { LoginDto, loginSchema, LogoutDto, logoutSchema, RefreshDto, refreshSchema, RegisterDto, registerSchema } from './auth.dto';
 
 @Controller('auth')
+@UseGuards(ThrottlerGuard)
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
 

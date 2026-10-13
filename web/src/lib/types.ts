@@ -105,11 +105,84 @@ export interface UserSettings {
   moduleHabits: boolean;
   moduleMatrix: boolean;
   moduleCalendar: boolean;
-  smartListsVisible: boolean;
+  smartListsVisible: string[] | null;
   defaultListId: string | null;
   defaultPriority: number | null;
   defaultReminderOffset: number | null;
   focusSettings: unknown;
+}
+
+/* --------------------------------- habits -------------------------------- */
+
+export interface HabitRecord {
+  id: string;
+  habitId: string;
+  date: string;
+  value: number;
+}
+
+export interface Habit {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: number | null;
+  /** 0 = 纯打卡，1 = 计数目标 */
+  goalType: number;
+  targetValue: number;
+  unit: string | null;
+  /** 0 = 每天，1 = 每周指定星期 */
+  frequency: number;
+  weekDays: number[];
+  startDate: string;
+  archived: boolean;
+  sortOrder: string;
+  records?: HabitRecord[];
+}
+
+export interface HabitTemplate {
+  id: string;
+  title: string;
+  icon: string;
+  color: number;
+  category: string;
+  defaultGoalType: number;
+  defaultTargetValue: number;
+  defaultUnit: string | null;
+  frequency: number;
+  sortOrder: number;
+}
+
+export interface HabitStat {
+  habitId: string;
+  name: string;
+  currentStreak: number;
+  longestStreak: number;
+  completionRate: number;
+  days: { date: string; value: number }[];
+}
+
+/* --------------------------------- focus --------------------------------- */
+
+export interface FocusSession {
+  id: string;
+  taskId: string | null;
+  mode: number;
+  plannedSeconds: number;
+  startedAt: string;
+  endedAt: string | null;
+  actualSeconds: number;
+  breakSeconds: number;
+  pauseCount: number;
+  /** 0 进行中 / 1 暂停 / 2 完成 / 3 取消 */
+  status: number;
+  interrupted: boolean;
+  note: string | null;
+}
+
+export interface FocusStats {
+  totalSeconds: number;
+  sessionCount: number;
+  byDay: { date: string; totalSeconds: number; count: number }[];
 }
 
 export interface ListResponse<T> {

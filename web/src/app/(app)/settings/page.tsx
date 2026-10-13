@@ -111,7 +111,10 @@ export default function SettingsPage() {
           </div>
         </Card>
 
-        <Card title="模块开关" className="mt-5">
+        <Card title="功能模块" className="mt-5">
+          <p className="-mt-2 mb-3 text-[12px] text-zinc-400">
+            关闭后侧栏对应入口会隐藏，直接访问其路由会自动回到「今天」。
+          </p>
           {isLoading ? (
             <div className="flex h-20 items-center justify-center">
               <Spinner />

@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -54,6 +55,7 @@ import com.tickflow.app.BuildConfig
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
     val theme by viewModel.theme.collectAsStateWithLifecycle()
+    val moduleFlags by viewModel.moduleFlags.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val packageName = context.packageName
@@ -193,6 +195,15 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
 
             Divider()
 
+            SectionTitle("功能模块")
+            val flags = moduleFlags
+            ModuleSwitch("番茄专注", flags.pomodoro) { viewModel.setModule(pomodoro = it) }
+            ModuleSwitch("习惯打卡", flags.habits) { viewModel.setModule(habits = it) }
+            ModuleSwitch("四象限", flags.matrix) { viewModel.setModule(matrix = it) }
+            ModuleSwitch("日历", flags.calendar) { viewModel.setModule(calendar = it) }
+
+            Divider()
+
             OutlinedButton(onClick = viewModel::logout, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Filled.Logout, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -206,6 +217,17 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun ModuleSwitch(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

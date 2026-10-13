@@ -37,6 +37,41 @@ object TimeUtils {
 
     fun endOfTodayIso(): String = plusDaysIso(startOfTodayIso(), 1)
 
+    // ---------------- 本地日期键（yyyy-MM-dd） ----------------
+
+    private fun localDateFmt() = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+
+    /** 设备本地时区的日期键，如 2026-10-13。 */
+    fun localDateKey(date: Date = Date()): String = localDateFmt().format(date)
+
+    fun todayKey(): String = localDateKey()
+
+    /** 今天是一周中的第几天（0=周一 … 6=周日），用于热力图按周对齐。 */
+    fun mondayIndexToday(): Int {
+        val c = Calendar.getInstance()
+        return (c.get(Calendar.DAY_OF_WEEK) + 5) % 7
+    }
+
+    /** ISO（含 00:00:00Z）→ yyyy-MM-dd。 */
+    fun isoDateKey(iso: String?): String? =
+        iso?.takeIf { it.length >= 10 }?.substring(0, 10)
+
+    fun dateKeyDaysAgo(days: Int): String {
+        val c = Calendar.getInstance()
+        c.add(Calendar.DAY_OF_YEAR, -days)
+        return localDateKey(c.time)
+    }
+
+    /**
+     * 日期键 -> UTC 零点 ISO。服务端习惯记录按 @db.Date 存储且用 UTC 切片取日期键，
+     * 因此必须把「本地日历日」编码为 UTC 零点，才能与其 todayKey(tz) 对齐。
+     */
+    fun utcMidnightIso(dateKey: String): String = "${dateKey}T00:00:00.000Z"
+
+    /** dateKey(2026-10-13) -> 10-13。 */
+    fun shortDate(dateKey: String): String =
+        if (dateKey.length >= 10) dateKey.substring(5) else dateKey
+
     /** 今天某整点（本地时区）。 */
     fun atTodayHourIso(hour: Int): String {
         val c = Calendar.getInstance()

@@ -13,7 +13,9 @@ import androidx.lifecycle.viewModelScope
 import com.tickflow.app.core.datastore.StoredUser
 import com.tickflow.app.core.reminder.ReminderScheduler
 import com.tickflow.app.core.repository.AuthRepository
+import com.tickflow.app.core.repository.ModuleFlags
 import com.tickflow.app.core.repository.SettingsRepository
+import com.tickflow.app.core.repository.UserSettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.SharingStarted
@@ -27,6 +29,7 @@ class SettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val authRepository: AuthRepository,
     private val settingsRepository: SettingsRepository,
+    private val userSettingsRepository: UserSettingsRepository,
     private val reminderScheduler: ReminderScheduler,
 ) : ViewModel() {
 
@@ -49,12 +52,30 @@ class SettingsViewModel @Inject constructor(
     val theme: StateFlow<String> =
         settingsRepository.themeFlow.stateIn(scope, SharingStarted.WhileSubscribed(5_000), "system")
 
+    val moduleFlags: StateFlow<ModuleFlags> =
+        userSettingsRepository.flags.stateIn(scope, SharingStarted.WhileSubscribed(5_000), ModuleFlags())
+
     init {
         viewModelScope.launch {
             serverUrl = authRepository.serverUrl()
             user = authRepository.currentUser()
         }
         refreshSystemStatus()
+        viewModelScope.launch { userSettingsRepository.refresh() }
+    }
+
+    /** 功能模块开关 → PUT /settings，关闭后底部导航对应项隐藏。 */
+    fun setModule(
+        pomodoro: Boolean? = null,
+        habits: Boolean? = null,
+        matrix: Boolean? = null,
+        calendar: Boolean? = null,
+    ) {
+        viewModelScope.launch {
+            userSettingsRepository.setModules(pomodoro = pomodoro, habits = habits, matrix = matrix, calendar = calendar)
+                .onSuccess { hint = "功能模块已更新" }
+                .onFailure { e -> hint = e.message ?: "更新失败" }
+        }
     }
 
     fun refreshSystemStatus() {

@@ -113,5 +113,11 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
   if (res.status === 204) return undefined as T;
   const text = await res.text();
-  return (text ? JSON.parse(text) : undefined) as T;
+  // 空响应体（如 GET /focus/sessions/current 无进行中会话）统一返回 undefined
+  if (!text.trim()) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(res.status, 'PARSE_ERROR', '响应解析失败');
+  }
 }
