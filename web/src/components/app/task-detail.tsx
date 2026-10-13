@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
-import { Check, Circle, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import dynamic from 'next/dynamic';
+import { Check, Circle, Repeat, Trash2, X } from 'lucide-react';
 import {
   useCreateTask,
   useDeleteTask,
+  useSubtaskCounts,
   useTask,
   useToggleTask,
   useUpdateTask,
@@ -13,13 +15,25 @@ import {
 import { useLists, useTags } from '@/lib/hooks/use-org';
 import { useUiStore } from '@/lib/ui-store';
 import { PRIORITY_COLORS, PRIORITY_LABELS, PRIORITY_OPTIONS, TASK_STATUS } from '@/lib/constants';
+import { buildRRule, parseRRule, type RepeatConfig } from '@/lib/rrule';
 import { cn, colorToHex, endOfDayIso, fromDatetimeLocal, nextWeekIso, toDatetimeLocal } from '@/lib/utils';
-import { Button, Dropdown, IconButton, Input, Spinner, Textarea } from '@/components/ui';
+import { Button, Dropdown, IconButton, Input, Spinner } from '@/components/ui';
+import { RepeatPicker } from './repeat-picker';
+import { ReminderPicker } from './reminder-picker';
+import { ChecklistEditor } from './checklist-editor';
+
+const RichTextEditor = dynamic(() => import('./rich-text-editor'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-[110px] animate-pulse rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-800/40" />
+  ),
+});
 
 export function TaskDetail({ taskId }: { taskId: string }) {
   const { data: task, isLoading } = useTask(taskId);
   const { data: lists = [] } = useLists();
   const { data: tags = [] } = useTags();
+  const subtaskCounts = useSubtaskCounts();
   const update = useUpdateTask();
   const remove = useDeleteTask();
   const toggle = useToggleTask();
@@ -28,13 +42,32 @@ export function TaskDetail({ taskId }: { taskId: string }) {
   const setDetailOpen = useUiStore((s) => s.setDetailOpen);
 
   const [title, setTitle] = useState('');
-  const [notes, setNotes] = useState('');
   const [subtaskTitle, setSubtaskTitle] = useState('');
+
+  // 备注：编辑器自持内容，本地防抖提交，避免逐字 PATCH
+  const notesRef = useRef('');
+  const savedNotesRef = useRef('');
+  const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     setTitle(task?.title ?? '');
-    setNotes(task?.notes ?? '');
-  }, [task?.id, task?.title, task?.notes]);
+  }, [task?.id, task?.title]);
+
+  useEffect(() => {
+    notesRef.current = task?.notes ?? '';
+    savedNotesRef.current = task?.notes ?? '';
+  }, [task?.id]);
+
+  useEffect(() => {
+    return () => {
+      if (notesTimer.current) clearTimeout(notesTimer.current);
+    };
+  }, []);
+
+  const repeatValue: RepeatConfig = useMemo(() => {
+    const cfg = parseRRule(task?.recurrenceRule);
+    return { ...cfg, repeatFrom: task?.repeatFrom === 1 ? 1 : 0 };
+  }, [task?.recurrenceRule, task?.repeatFrom]);
 
   if (isLoading || !task) {
     return (
@@ -47,6 +80,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
   const completed = task.status === TASK_STATUS.COMPLETED;
   const tagIds = task.tagIds ?? [];
   const subtasks = task.subtasks ?? [];
+  const childStat = subtaskCounts.get(task.id);
 
   const commit = (patch: UpdateTaskInput) => update.mutate(patch);
 
@@ -62,6 +96,26 @@ export function TaskDetail({ taskId }: { taskId: string }) {
     create.mutate({ title: t, parentId: task!.id, listId: task!.listId });
   }
 
+  function handleNotesChange(markdown: string) {
+    notesRef.current = markdown;
+    if (notesTimer.current) clearTimeout(notesTimer.current);
+    notesTimer.current = setTimeout(() => {
+      if (notesRef.current === savedNotesRef.current) return;
+      savedNotesRef.current = notesRef.current;
+      update.mutate({ id: taskId, notes: notesRef.current || null });
+    }, 800);
+  }
+
+  function applyRepeat(cfg: RepeatConfig) {
+    const rule = buildRRule(cfg);
+    commit({
+      id: task!.id,
+      recurrenceRule: rule,
+      repeatFrom: cfg.repeatFrom,
+      recurrenceDtstart: rule ? (task!.dueDate ?? new Date().toISOString()) : null,
+    });
+  }
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex items-center justify-between border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
@@ -74,9 +128,13 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           >
             {completed ? <Check className="h-5 w-5" /> : <Circle className="h-5 w-5" />}
           </button>
-          <span className="text-[13px] font-medium text-zinc-400">
-            {completed ? '已完成' : '待办'}
-          </span>
+          <span className="text-[13px] font-medium text-zinc-400">{completed ? '已完成' : '待办'}</span>
+          {task.recurrenceRule && (
+            <span className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
+              <Repeat className="h-3 w-3" />
+              重复
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <IconButton
@@ -111,17 +169,10 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           placeholder="任务标题"
         />
 
-        {/* 备注 */}
-        <Textarea
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          onBlur={() => {
-            if (notes !== (task.notes ?? '')) commit({ id: task.id, notes: notes || null });
-          }}
-          rows={4}
-          placeholder="添加备注…"
-          className="text-[13px]"
-        />
+        {/* 备注（Markdown 富文本） */}
+        <Section label="备注">
+          <RichTextEditor value={task.notes ?? ''} onChange={handleNotesChange} />
+        </Section>
 
         {/* 优先级 */}
         <Section label="优先级">
@@ -158,11 +209,24 @@ export function TaskDetail({ taskId }: { taskId: string }) {
               <QuickChip onClick={() => commit({ id: task.id, dueDate: endOfDayIso(0) })}>今天</QuickChip>
               <QuickChip onClick={() => commit({ id: task.id, dueDate: endOfDayIso(1) })}>明天</QuickChip>
               <QuickChip onClick={() => commit({ id: task.id, dueDate: nextWeekIso() })}>下周</QuickChip>
-              {task.dueDate && (
-                <QuickChip onClick={() => commit({ id: task.id, dueDate: null })}>清除</QuickChip>
-              )}
+              {task.dueDate && <QuickChip onClick={() => commit({ id: task.id, dueDate: null })}>清除</QuickChip>}
             </div>
           </div>
+        </Section>
+
+        {/* 重复 */}
+        <Section label="重复">
+          <RepeatPicker value={repeatValue} onChange={applyRepeat} />
+        </Section>
+
+        {/* 提醒 */}
+        <Section label="提醒">
+          <ReminderPicker
+            value={(task.reminders ?? []).map((r) => r.offset)}
+            onChange={(offsets) =>
+              commit({ id: task.id, reminders: offsets.length ? offsets.map((offset) => ({ offset })) : null })
+            }
+          />
         </Section>
 
         {/* 所属清单 */}
@@ -194,7 +258,12 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                 >
                   <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: colorToHex(tag.color) }} />
                   {tag.name}
-                  <button type="button" aria-label="移除标签" onClick={() => toggleTag(id)} className="text-zinc-400 hover:text-zinc-600">
+                  <button
+                    type="button"
+                    aria-label="移除标签"
+                    onClick={() => toggleTag(id)}
+                    className="text-zinc-400 hover:text-zinc-600"
+                  >
                     <X className="h-3 w-3" />
                   </button>
                 </span>
@@ -231,13 +300,23 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           </div>
         </Section>
 
+        {/* 检查项 */}
+        <Section label="检查项">
+          <ChecklistEditor taskId={task.id} checklist={task.checklist} />
+        </Section>
+
         {/* 子任务 */}
-        <Section label={`子任务${subtasks.length ? ` · ${subtasks.filter((s) => s.status === TASK_STATUS.COMPLETED).length}/${subtasks.length}` : ''}`}>
+        <Section
+          label={`子任务${childStat ? ` · ${childStat.done}/${childStat.total}` : ''}`}
+        >
           <div className="space-y-1">
             {subtasks.map((st) => {
               const done = st.status === TASK_STATUS.COMPLETED;
               return (
-                <div key={st.id} className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
+                <div
+                  key={st.id}
+                  className="group flex items-center gap-2 rounded-lg px-1 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                >
                   <button
                     type="button"
                     aria-label="切换子任务"
@@ -246,7 +325,12 @@ export function TaskDetail({ taskId }: { taskId: string }) {
                   >
                     {done ? <Check className="h-4 w-4" /> : <Circle className="h-4 w-4" />}
                   </button>
-                  <span className={cn('flex-1 truncate text-[13px]', done ? 'text-zinc-400 line-through' : 'text-zinc-700 dark:text-zinc-200')}>
+                  <span
+                    className={cn(
+                      'flex-1 truncate text-[13px]',
+                      done ? 'text-zinc-400 line-through' : 'text-zinc-700 dark:text-zinc-200',
+                    )}
+                  >
                     {st.title}
                   </span>
                   <IconButton

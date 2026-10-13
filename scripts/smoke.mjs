@@ -327,6 +327,48 @@ async function main() {
   check('规则结束按普通完成处理', onceDone.json?.rolled === false && onceDone.json?.status === 2, [onceDone.json?.rolled, onceDone.json?.status]);
   check('PATCH 非法 RRULE → 400', (await req('PATCH', `/tasks/${taskA.id}`, { token, body: { recurrenceRule: 'FREQ=SECONDLY' } })).status === 400);
 
+  // ---------- 10.6) /sync 推送完成 → 服务端权威滚动 (M2 契约修补) ----------
+  const syncRec = (
+    await req('POST', '/tasks', {
+      token,
+      body: { title: '同步滚动-每周一三五', listId, dueDate: nextMonday.toISOString(), recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR' },
+    })
+  ).json;
+  const baseCursor = (await req('GET', '/sync/bootstrap', { token })).json.cursor;
+  const evAt = new Date(Date.now() + 30 * 1000).toISOString();
+  const completionPayload = (cursor) => ({
+    deviceId: 'device-B',
+    cursor,
+    entities: { tasks: [{ id: syncRec.id, status: 2, updatedAt: evAt, deviceId: 'device-B' }] },
+    tombstones: [],
+  });
+
+  const push1 = await req('POST', '/sync', { token, body: completionPayload(baseCursor) });
+  const pushed1 = (push1.json?.entities?.tasks ?? []).find((t) => t.id === syncRec.id);
+  check('/sync 推送完成触发滚动(status 保持0)', pushed1?.status === 0, pushed1?.status);
+  const rolledDue = pushed1?.nextDueDate ?? null;
+  check('/sync 滚动到下一次 occurrence(周三)', !!rolledDue && new Date(rolledDue).getUTCDay() === 3 && new Date(rolledDue).getTime() > nextMonday.getTime(), rolledDue);
+  check('/sync applied 含该任务', (push1.json?.applied ?? []).some((a) => a.id === syncRec.id), push1.json?.applied);
+  const after1 = (await req('GET', `/tasks/${syncRec.id}`, { token })).json;
+  check('/sync 滚动结果与 GET 一致', after1.status === 0 && after1.nextDueDate === rolledDue && after1.recurrenceDtstart === nextMonday.toISOString(), [after1.status, after1.nextDueDate]);
+  const calSync = await req('GET', calQ, { token });
+  const syncOcc = (calSync.json?.days ?? []).find((d) => d.date === localKey(nextMonday))?.tasks.find((t) => t.id === syncRec.id);
+  check('/sync 滚动写入 occurrence(completed:true)', syncOcc?.completed === true, syncOcc?.completed);
+
+  const push2 = await req('POST', '/sync', { token, body: completionPayload(push1.json.cursor) });
+  const after2 = (await req('GET', `/tasks/${syncRec.id}`, { token })).json;
+  check('重复完成事件不二次滚动(due 不变)', after2.nextDueDate === rolledDue && after2.status === 0, [after2.nextDueDate, rolledDue]);
+  check('重复完成事件被 skippedOlder', (push2.json?.skippedOlder ?? []).some((s) => s.id === syncRec.id), push2.json?.skippedOlder);
+
+  // incoming 已是滚动后状态(status=0) → 正常 LWW，不触发滚动
+  const laterAt = new Date(Date.now() + 60 * 1000).toISOString();
+  const push3 = await req('POST', '/sync', {
+    token,
+    body: { deviceId: 'device-B', cursor: push2.json.cursor, entities: { tasks: [{ id: syncRec.id, status: 0, title: '同步滚动-改名', updatedAt: laterAt, deviceId: 'device-B' }] }, tombstones: [] },
+  });
+  const after3 = (await req('GET', `/tasks/${syncRec.id}`, { token })).json;
+  check('status=0 增量正常 LWW 且不滚动', (push3.json?.applied ?? []).some((a) => a.id === syncRec.id) && after3.title === '同步滚动-改名' && after3.nextDueDate === rolledDue, [after3.title, after3.nextDueDate]);
+
   // ---------- 11) refresh 轮换 + 重放检测（独立用户，避免影响主会话） ----------
   const email2 = `smoke_rt_${stamp}@example.com`;
   const reg2 = await req('POST', '/auth/register', { body: { email: email2, password, deviceId: 'dev-rt', platform: 'android' } });

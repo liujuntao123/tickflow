@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma.service';
 import { withSync, SyncTx } from '../../common/sync/seq-allocator';
 import { clampIncoming, lwwWins, storedLww } from '../../common/sync/lww';
 import { localDate } from '../views/views.service';
+import { rollRecurringTask } from '../tasks/task-roll';
 import { SyncDto } from './sync.dto';
 
 type FieldKind = 'raw' | 'date' | 'bigint' | 'json';
@@ -202,6 +203,19 @@ export class SyncService {
 
     const base = this.buildData(input, spec.fields);
 
+    // 完成事件：incoming.status==2 且服务端当前非完成态且任务带重复规则
+    // → 服务端权威滚动（与 REST complete 同一段逻辑），不落地 status=2
+    const isTask = spec.key === 'tasks';
+    const hasRule = Boolean((input.recurrenceRule as string | undefined) ?? existing?.recurrenceRule);
+    const completionEvent =
+      isTask && Number(input.status) === 2 && hasRule && (!existing || existing.status !== 2);
+    if (completionEvent) {
+      base.status = 0;
+      base.completedAt = null;
+    }
+
+    let appliedEntry: { type: string; id: string; seq: number } | null = null;
+
     if (!existing) {
       const created = await delegate.create({
         data: {
@@ -213,7 +227,8 @@ export class SyncService {
           lwwDevice: incomingDevice,
         },
       });
-      applied.push({ type: spec.key, id, seq: Number(created.seq) });
+      appliedEntry = { type: spec.key, id, seq: Number(created.seq) };
+      applied.push(appliedEntry);
     } else {
       const stored = storedLww(existing);
       if (lwwWins(incomingAt, incomingDevice, stored.at, stored.device)) {
@@ -221,13 +236,26 @@ export class SyncService {
           where: { [spec.idField]: id },
           data: { ...base, seq: BigInt(alloc()), lwwAt: incomingAt, lwwDevice: incomingDevice },
         });
-        applied.push({ type: spec.key, id, seq: Number(updated.seq) });
+        appliedEntry = { type: spec.key, id, seq: Number(updated.seq) };
+        applied.push(appliedEntry);
       } else {
         skipped.push({ type: spec.key, id });
       }
     }
 
-    if (spec.key === 'tasks' && Array.isArray(input.tagIds)) {
+    // 完成事件被接受（LWW 胜出/新建）后执行滚动；净变化实体的新 seq 回填到 applied
+    if (completionEvent && appliedEntry) {
+      const fresh = await tx.task.findUnique({ where: { id } });
+      if (fresh) {
+        const roll = await rollRecurringTask({ tx, userId, task: fresh, alloc, lwwAt: incomingAt, lwwDevice: incomingDevice });
+        if (roll.rolled) {
+          const finalRow = await tx.task.findUnique({ where: { id } });
+          if (finalRow) appliedEntry.seq = Number(finalRow.seq);
+        }
+      }
+    }
+
+    if (isTask && Array.isArray(input.tagIds)) {
       await this.rebuildTaskTags(tx, userId, id, input.tagIds as string[]);
     }
   }

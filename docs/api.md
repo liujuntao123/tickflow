@@ -317,6 +317,7 @@ COUNT=n  或  UNTIL=YYYYMMDDTHHMMSSZ 二选一
 - 单个事务内（`withSync`）**先推送、再增量拉取**。拉取返回各表 `seq > cursor` 的全部行，按 `deletedAt` 拆分为 `entities`（存活）与 `tombstones`（墓碑）。
 - **LWW**：入站 `updatedAt` 钳制到 `now + 2min`；与存储的 `(lwwAt ?? updatedAt, lwwDevice ?? '')` 按 **(时间, deviceId) 字典序**比较，大者胜。胜出则写入并置 `lwwAt/lwwDevice = 入站值`、`seq = alloc()`；否则进 `skippedOlder`。新实体（不存在）直接写入。
 - **tombstones**：把对应实体软删（`deletedAt=now, seq=alloc()`）。
+- **重复任务完成滚动（服务端权威）**：推送的 task 若 `status===2` 且服务端当前不存在该任务或非完成态、且该任务带 `recurrenceRule` → **不落地 `status=2`**，而是执行与 REST `POST /tasks/:id/complete` **完全相同的滚动逻辑**（同一共享函数 `rollRecurringTask`）：写 `task_occurrences`（范式同 REST）、`status=0`、`dueDate/nextDueDate=下一次 occurrence`、`completedAt=null`，各分配新 `seq`；规则已终态（无 next）则按普通完成落地 `status=2`。滚动产生的新 seq 自然出现在本次 delta 的 `entities` 中回给客户端（`applied[].seq` 为最终 seq）。由于滚动后 `lwwAt/lwwDevice` 置为入站值，**重复推送同一完成事件**（相同 `updatedAt`+设备）会因 LWW 平局进入 `skippedOlder`，不会二次滚动。incoming 本就是滚动后的状态（`status=0` + 新 `dueDate`）则走正常 LWW。
 - **首同步两阶段**：`cursor === 0` 且服务端该用户有数据 且客户端本次带了任何 `entities`/`tombstones` → 返回 `needsFullResync: true`，**不应用任何客户端数据**（`entities`/`tombstones` 为空，`cursor=0`），客户端随后走 `GET /sync/bootstrap` 全量重拉再合并。服务端为空则正常应用（本地种子上云）。
 - REST 写路径同样经由 `withSync`，并把 `lwwAt` 设为 `now()`、`lwwDevice = 'server'`。
 

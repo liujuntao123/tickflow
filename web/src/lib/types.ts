@@ -55,7 +55,13 @@ export interface Task {
   startDate: string | null;
   timezone: string | null;
   recurrenceRule: string | null;
+  recurrenceTz: string | null;
+  recurrenceDtstart: string | null;
+  recurrenceEnd: string | null;
+  repeatFrom: number;
   nextDueDate: string | null;
+  reminders: { offset: number }[] | null;
+  reminderRepeatMinutes: number | null;
   checklist: ChecklistItem[] | null;
   sortOrder: string;
   tagIds: string[];
@@ -111,4 +117,4 @@ export interface ListResponse<T> {
   nextCursor: string | null;
 }
 
-export type GroupBy = 'list' | 'date' | 'priority';
+export type GroupBy = 'list' | 'date' | 'priority' | 'quadrant';

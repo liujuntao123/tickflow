@@ -1,6 +1,6 @@
 # @tickflow/web
 
-TickFlow 的 Web 桌面端（Next.js 15 App Router + React 19），滴答清单风格的复刻实现，当前为 **M1**。
+TickFlow 的 Web 桌面端（Next.js 15 App Router + React 19），滴答清单风格的复刻实现，当前为 **M2**。
 
 ## 技术要点
 
@@ -18,15 +18,20 @@ src/
     (app)/            三栏应用外壳（侧边栏 + 中栏任务列表 + 右栏详情）
       today|inbox|tomorrow|next7|all|completed
       list/[id]  folder/[id]  tag/[id]  search  settings
-      calendar|focus|habits|matrix      占位页（后续里程碑）
+      calendar                          月 / 议程视图
+      focus|habits|matrix               占位页（后续里程碑）
     api/backend/[...path]/route.ts      后端代理
     api/health/route.ts                 容器健康检查
     providers.tsx                       QueryClient + 会话引导 + 主题初始化
   components/
     ui.tsx                             基础组件（Button/Input/Modal/Dropdown…）
-    app/                               侧边栏、任务行、快速添加、详情面板、工作区…
+    app/                               侧边栏、任务行、快速添加、详情面板、工作区、
+                                       重复/提醒选择器、检查项编辑、TipTap 富文本、
+                                       日历视图、拖拽行…
   lib/
     api.ts  session.ts  theme.ts  ui-store.ts  types.ts  utils.ts  grouping.ts
+    rrule.ts                            重复规则构建/解析/展开
+    notifications.ts                    页内到期通知
     hooks/                             react-query hooks
 ```
 
@@ -68,9 +73,11 @@ docker compose ps                    # web 应显示 healthy
 2. `pnpm --filter @tickflow/web dev` 后经 `http://127.0.0.1:3001/api/backend` 走一遍注册 → 登录 → 建清单 → 建任务 → 查 `views/counts`；确认 web 平台响应体**不含** `refreshToken`，且已种下 `tf_rt` cookie。
 3. `docker compose build web && docker compose up -d web` 后 `docker compose ps` 为 healthy，`http://127.0.0.1:8080/api/backend/healthz` 与首页均返回 200。
 
-## 已知限制（M1）
+## 已知限制（M2）
 
-- 智能清单的**分组切换在客户端完成**（服务端先按清单返回，前端再按 日期/优先级 重排）。
-- 任务行内的**子任务计数**依赖 `checklist`；子任务本身（`subtasks`）仅在 `/tasks/:id` 返回，故计数只在详情面板中展示。
-- 批量操作、拖拽排序、日历/专注/习惯/四象限均为占位页，留待后续里程碑。
+- 智能清单的**分组切换在客户端完成**（服务端按清单返回，前端再按日期/优先级/四象限重排）；四象限规则：重要 = `priority ∈ {3,5}`，紧急 = 有效到期 ≤ 明天结束。
+- **拖拽排序**仅在“按清单”分组下启用（同一清单内重排）；侧栏清单支持**同一容器内**拖拽，跨文件夹移动未做。
+- **标签筛选**为「任一命中」（OR），纯前端过滤。
+- 重复任务的滚动由后端完成（响应 `rolled: true` + 新 `nextDueDate`），前端只做缓存更新；日历以服务端展开的 `occurrenceDate` 为准，仅在旧版后端不展开时用 `src/lib/rrule.ts` 端上兜底。
+- 专注 / 习惯 / 四象限仍为占位页，留待后续里程碑。
 - `packages/contracts` 的常量在 `src/lib/constants.ts` 做了本地镜像，避免 web 构建依赖其编译产物。

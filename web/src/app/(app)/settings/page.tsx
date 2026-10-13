@@ -3,9 +3,10 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { LogOut } from 'lucide-react';
+import { Bell, LogOut } from 'lucide-react';
 import { useSettings, useUpdateProfile, useUpdateSettings } from '@/lib/hooks/use-settings';
 import { logout } from '@/lib/hooks/use-auth';
+import { notificationSupport, requestNotificationPermission } from '@/lib/notifications';
 import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 import { Button, Field, Input, Spinner } from '@/components/ui';
@@ -44,6 +45,11 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState('');
   const [timezone, setTimezone] = useState('Asia/Shanghai');
   const [saved, setSaved] = useState(false);
+  const [permission, setPermission] = useState<ReturnType<typeof notificationSupport>>('default');
+
+  useEffect(() => {
+    setPermission(notificationSupport());
+  }, []);
 
   useEffect(() => {
     setDisplayName(user?.displayName ?? '');
@@ -126,6 +132,32 @@ export default function SettingsPage() {
               ))}
             </div>
           )}
+        </Card>
+
+        <Card title="浏览器通知" className="mt-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[14px] text-zinc-800 dark:text-zinc-100">任务到期通知</p>
+              <p className="mt-0.5 text-[12px] text-zinc-400">
+                {permission === 'granted'
+                  ? '已开启，页面打开时每分钟检查一次即将到期的任务。'
+                  : permission === 'denied'
+                    ? '浏览器已拒绝通知权限，请在地址栏的站点设置中重新允许。'
+                    : permission === 'unsupported'
+                      ? '当前浏览器不支持通知。'
+                      : '开启后，即将到期（按提醒偏移）的任务会弹出系统通知（仅页面打开时生效）。'}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant={permission === 'granted' ? 'secondary' : 'primary'}
+              disabled={permission === 'granted' || permission === 'unsupported'}
+              onClick={async () => setPermission(await requestNotificationPermission())}
+            >
+              <Bell className="h-4 w-4" />
+              {permission === 'granted' ? '已开启' : '开启浏览器通知'}
+            </Button>
+          </div>
         </Card>
 
         <Card title="外观" className="mt-5">

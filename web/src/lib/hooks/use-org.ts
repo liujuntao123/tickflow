@@ -71,6 +71,25 @@ export function useLists() {
   });
 }
 
+/** 侧栏清单拖动排序（同一容器内）。 */
+export function useReorderLists() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (orderedIds: string[]) =>
+      apiFetch<{ ok: boolean }>('/lists/reorder', { method: 'POST', body: { orderedIds } }),
+    onMutate: (orderedIds) => {
+      qc.setQueryData<TaskList[]>(orgKeys.allLists, (old) => {
+        if (!old) return old;
+        const order = new Map(orderedIds.map((id, i) => [id, i]));
+        const moved = old.filter((l) => order.has(l.id)).sort((a, b) => order.get(a.id)! - order.get(b.id)!);
+        let cursor = 0;
+        return old.map((l) => (order.has(l.id) ? moved[cursor++] : l));
+      });
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['lists'] }),
+  });
+}
+
 export function useCreateList() {
   const qc = useQueryClient();
   return useMutation({

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { apiFetch } from '../api';
 import { unwrap } from './use-org';
@@ -5,6 +6,7 @@ import type { ListResponse, Task, TaskList, ViewResponse } from '../types';
 import { TASK_STATUS } from '../constants';
 
 export const taskKeys = {
+  all: ['tasks', 'all'] as const,
   byList: (listId: string) => ['tasks', 'list', listId] as const,
   byTag: (tagId: string) => ['tasks', 'tag', tagId] as const,
   detail: (id: string) => ['task', id] as const,
@@ -30,6 +32,40 @@ export interface UpdateTaskInput {
   listId?: string;
   tagIds?: string[];
   status?: number;
+  recurrenceRule?: string | null;
+  recurrenceTz?: string | null;
+  recurrenceDtstart?: string | null;
+  repeatFrom?: number;
+  reminders?: { offset: number }[] | null;
+  checklist?: Task['checklist'];
+}
+
+/** 全部任务（含子任务），用于子任务计数、通知与日历的重复展开兜底。 */
+export function useAllTasks() {
+  return useQuery({
+    queryKey: taskKeys.all,
+    queryFn: async () => {
+      const data = await apiFetch<ListResponse<Task>>('/tasks', { query: { limit: 500 } });
+      return data.items;
+    },
+    staleTime: 30_000,
+  });
+}
+
+/** parentId → 子任务进度，避免为每个任务单独拉详情。 */
+export function useSubtaskCounts() {
+  const { data: tasks = [] } = useAllTasks();
+  return useMemo(() => {
+    const map = new Map<string, { total: number; done: number }>();
+    for (const t of tasks) {
+      if (!t.parentId) continue;
+      const cur = map.get(t.parentId) ?? { total: 0, done: 0 };
+      cur.total += 1;
+      if (t.status === TASK_STATUS.COMPLETED) cur.done += 1;
+      map.set(t.parentId, cur);
+    }
+    return map;
+  }, [tasks]);
 }
 
 export function useTasksByList(listId: string | null) {
@@ -154,15 +190,55 @@ export function useDeleteTask() {
 export function useToggleTask() {
   const qc = useQueryClient();
   return useMutation({
+    // 后端滚动语义（若已实现）会在响应中带 rolled 与新的 nextDueDate
     mutationFn: ({ id, completed }: { id: string; completed: boolean }) =>
-      apiFetch<Task>(`/tasks/${id}/${completed ? 'complete' : 'uncomplete'}`, { method: 'POST' }),
+      apiFetch<Task & { rolled?: boolean }>(`/tasks/${id}/${completed ? 'complete' : 'uncomplete'}`, {
+        method: 'POST',
+      }),
     onMutate: ({ id, completed }) => {
       patchTaskEverywhere(qc, id, {
         status: completed ? TASK_STATUS.COMPLETED : TASK_STATUS.OPEN,
         completedAt: completed ? new Date().toISOString() : null,
       });
     },
+    onSuccess: (task) => {
+      // 重复任务完成即滚动：用服务端返回的最新字段就地更新，避免闪回已完成态
+      if (task && (task as { rolled?: boolean }).rolled) {
+        patchTaskEverywhere(qc, task.id, task);
+      }
+    },
     onSettled: () => invalidateTaskData(qc),
+  });
+}
+
+/** 拖动排序：按 listId + parentId 重排，乐观更新对应缓存。 */
+export function useReorderTasks() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { listId: string; parentId?: string | null; orderedIds: string[] }) =>
+      apiFetch<{ ok: boolean }>('/tasks/reorder', {
+        method: 'POST',
+        body: { listId: input.listId, parentId: input.parentId ?? null, orderedIds: input.orderedIds },
+      }),
+    onMutate: ({ listId, orderedIds }) => {
+      const order = new Map(orderedIds.map((id, index) => [id, index]));
+      const applyOrder = (tasks: Task[]): Task[] => {
+        const inList = tasks.filter((t) => t.listId === listId && !t.parentId);
+        if (inList.length < 2) return tasks;
+        inList.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+        let cursor = 0;
+        return tasks.map((t) => (t.listId === listId && !t.parentId ? inList[cursor++] : t));
+      };
+      qc.setQueriesData<Task[]>({ queryKey: ['tasks'] }, (old) => (Array.isArray(old) ? applyOrder(old) : old));
+      qc.setQueriesData<ViewResponse>({ queryKey: ['views'] }, (old) => {
+        if (!old || !Array.isArray(old.groups)) return old;
+        return { ...old, groups: old.groups.map((g) => ({ ...g, tasks: applyOrder(g.tasks) })) };
+      });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] });
+      qc.invalidateQueries({ queryKey: ['views'] });
+    },
   });
 }
 

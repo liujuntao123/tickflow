@@ -1,5 +1,6 @@
-import { startOfDay } from 'date-fns';
+import { startOfDay, addDays } from 'date-fns';
 import type { GroupBy, Task, TaskList } from './types';
+import { QUADRANT_LABELS } from './constants';
 import { effectiveDue } from './utils';
 
 export interface TaskGroup {
@@ -33,6 +34,25 @@ const DATE_LABELS: Record<string, string> = {
 };
 
 export function groupTasks(tasks: Task[], groupBy: GroupBy, lists: TaskList[]): TaskGroup[] {
+  if (groupBy === 'quadrant') {
+    // 重要 = priority ∈ {3,5}；紧急 = 有效到期 ≤ 明天结束
+    const urgentBefore = addDays(startOfDay(new Date()), 2).getTime();
+    const order: string[] = ['q1', 'q2', 'q3', 'q4'];
+    const buckets = new Map<string, Task[]>();
+    for (const t of tasks) {
+      const important = t.priority === 3 || t.priority === 5;
+      const due = effectiveDue(t);
+      const urgent = due ? due.getTime() < urgentBefore : false;
+      const q = important && urgent ? 'q1' : important ? 'q2' : urgent ? 'q3' : 'q4';
+      const arr = buckets.get(q) ?? [];
+      arr.push(t);
+      buckets.set(q, arr);
+    }
+    return order
+      .filter((q) => buckets.has(q))
+      .map((q) => ({ key: `q-${q}`, label: QUADRANT_LABELS[q] ?? q, tasks: buckets.get(q)! }));
+  }
+
   if (groupBy === 'priority') {
     const buckets = new Map<string, Task[]>();
     for (const t of tasks) {

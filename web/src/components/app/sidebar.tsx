@@ -4,12 +4,30 @@ import { useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
   CalendarDays,
   CalendarRange,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   Folder as FolderIcon,
+  GripVertical,
   Hash,
   Inbox,
   Layers,
@@ -29,6 +47,7 @@ import {
   useDeleteTag,
   useFolders,
   useLists,
+  useReorderLists,
   useTags,
   useUpdateFolder,
   useUpdateList,
@@ -88,6 +107,37 @@ export function Sidebar() {
     [tags],
   );
   const sortedLists = (arr: TaskList[]) => [...arr].sort((a, b) => Number(a.sortOrder) - Number(b.sortOrder));
+
+  const reorderLists = useReorderLists();
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  /** 每个容器（文件夹 / 顶层）内的清单顺序，用于判断拖动是否落在同一容器。 */
+  const listContainers = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const folder of sortedFolders) {
+      map.set(
+        folder.id,
+        sortedLists(regularLists.filter((l) => l.folderId === folder.id)).map((l) => l.id),
+      );
+    }
+    map.set('__root__', sortedLists(regularLists.filter((l) => !l.folderId)).map((l) => l.id));
+    return map;
+  }, [sortedFolders, regularLists]);
+
+  function handleListDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    for (const ids of listContainers.values()) {
+      if (!ids.includes(activeId) || !ids.includes(overId)) continue;
+      reorderLists.mutate(arrayMove(ids, ids.indexOf(activeId), ids.indexOf(overId)));
+      return;
+    }
+  }
 
   function toggleFolder(id: string) {
     setCollapsed((prev) => {
@@ -232,7 +282,8 @@ export function Sidebar() {
         </Link>
       </div>
 
-      <nav className="tf-scroll flex-1 space-y-4 overflow-y-auto px-2 pb-3">
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleListDragEnd}>
+        <nav className="tf-scroll flex-1 space-y-4 overflow-y-auto px-2 pb-3">
         {/* 智能清单 */}
         <ul className="space-y-0.5">
           {SMART_ITEMS.map((item) => {
@@ -336,19 +387,21 @@ export function Sidebar() {
 
                   {!isCollapsed && (
                     <ul className="ml-3 space-y-0.5 border-l border-zinc-200 pl-2 dark:border-zinc-800">
-                      {children.map((list) => (
-                        <li key={list.id}>
-                          <ListRow
-                            list={list}
-                            active={pathname === `/list/${list.id}`}
-                            editing={editing?.kind === 'list' && editing.id === list.id}
-                            onCommitRename={(v) => commitRename('list', list.id, v)}
-                            onCancelRename={() => setEditing(null)}
-                            menu={entityMenu('list', list.id, list.name)}
-                            onStartRename={() => setEditing({ kind: 'list', id: list.id })}
-                          />
-                        </li>
-                      ))}
+                      <SortableContext items={children.map((l) => l.id)} strategy={verticalListSortingStrategy}>
+                        {children.map((list) => (
+                          <li key={list.id}>
+                            <SortableListRow
+                              list={list}
+                              active={pathname === `/list/${list.id}`}
+                              editing={editing?.kind === 'list' && editing.id === list.id}
+                              onCommitRename={(v) => commitRename('list', list.id, v)}
+                              onCancelRename={() => setEditing(null)}
+                              menu={entityMenu('list', list.id, list.name)}
+                              onStartRename={() => setEditing({ kind: 'list', id: list.id })}
+                            />
+                          </li>
+                        ))}
+                      </SortableContext>
                       {children.length === 0 && (
                         <li className="px-3 py-1 text-[12px] text-zinc-300 dark:text-zinc-600">空</li>
                       )}
@@ -358,19 +411,24 @@ export function Sidebar() {
               );
             })}
 
-            {sortedLists(regularLists.filter((l) => !l.folderId)).map((list) => (
-              <li key={list.id}>
-                <ListRow
-                  list={list}
-                  active={pathname === `/list/${list.id}`}
-                  editing={editing?.kind === 'list' && editing.id === list.id}
-                  onCommitRename={(v) => commitRename('list', list.id, v)}
-                  onCancelRename={() => setEditing(null)}
-                  menu={entityMenu('list', list.id, list.name)}
-                  onStartRename={() => setEditing({ kind: 'list', id: list.id })}
-                />
-              </li>
-            ))}
+            <SortableContext
+              items={sortedLists(regularLists.filter((l) => !l.folderId)).map((l) => l.id)}
+              strategy={verticalListSortingStrategy}
+            >
+              {sortedLists(regularLists.filter((l) => !l.folderId)).map((list) => (
+                <li key={list.id}>
+                  <SortableListRow
+                    list={list}
+                    active={pathname === `/list/${list.id}`}
+                    editing={editing?.kind === 'list' && editing.id === list.id}
+                    onCommitRename={(v) => commitRename('list', list.id, v)}
+                    onCancelRename={() => setEditing(null)}
+                    menu={entityMenu('list', list.id, list.name)}
+                    onStartRename={() => setEditing({ kind: 'list', id: list.id })}
+                  />
+                </li>
+              ))}
+            </SortableContext>
           </ul>
         </div>
 
@@ -418,6 +476,7 @@ export function Sidebar() {
           </ul>
         </div>
       </nav>
+      </DndContext>
 
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
         <ThemeSwitch />
@@ -453,15 +512,7 @@ export function Sidebar() {
   );
 }
 
-function ListRow({
-  list,
-  active,
-  editing,
-  menu,
-  onStartRename,
-  onCommitRename,
-  onCancelRename,
-}: {
+type ListRowProps = {
   list: TaskList;
   active: boolean;
   editing: boolean;
@@ -469,7 +520,49 @@ function ListRow({
   onStartRename: () => void;
   onCommitRename: (v: string) => void;
   onCancelRename: () => void;
-}) {
+};
+
+function SortableListRow(props: ListRowProps) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.list.id,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(isDragging && 'relative z-10 opacity-70')}
+    >
+      <ListRow
+        {...props}
+        dragHandle={
+          <button
+            ref={setActivatorNodeRef}
+            type="button"
+            aria-label="拖动排序"
+            {...attributes}
+            {...listeners}
+            onClick={(e) => e.stopPropagation()}
+            className="-ml-1.5 shrink-0 cursor-grab touch-none rounded p-0.5 text-zinc-300 opacity-0 transition-opacity hover:text-zinc-500 group-hover:opacity-100 active:cursor-grabbing"
+          >
+            <GripVertical className="h-3.5 w-3.5" />
+          </button>
+        }
+      />
+    </div>
+  );
+}
+
+function ListRow({
+  list,
+  active,
+  editing,
+  menu,
+  dragHandle,
+  onStartRename,
+  onCommitRename,
+  onCancelRename,
+}: ListRowProps & { dragHandle?: ReactNode }) {
   return (
     <div
       className={cn(
@@ -479,6 +572,7 @@ function ListRow({
           : 'text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800',
       )}
     >
+      {dragHandle}
       <Hash className="h-4 w-4 shrink-0" style={{ color: colorToHex(list.color) }} />
       {editing ? (
         <RenameInput defaultValue={list.name} onCommit={onCommitRename} onCancel={onCancelRename} />

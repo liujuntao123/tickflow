@@ -1,12 +1,15 @@
 'use client';
 
-import { CheckCircle2, Circle, Flag, ListChecks, Pencil, Trash2 } from 'lucide-react';
+import { CheckCircle2, Circle, Flag, ListChecks, Pencil, Repeat, Trash2 } from 'lucide-react';
 import { useDeleteTask, useToggleTask } from '@/lib/hooks/use-tasks';
 import { useUiStore } from '@/lib/ui-store';
 import { PRIORITY_COLORS, TASK_STATUS } from '@/lib/constants';
 import { cn, colorToHex, dueTone, effectiveDue, formatDue } from '@/lib/utils';
 import { IconButton } from '@/components/ui';
+import type { ReactNode } from 'react';
 import type { Tag, Task } from '@/lib/types';
+
+export type SubtaskCount = { total: number; done: number };
 
 const dueToneClass: Record<string, string> = {
   overdue: 'text-red-600 bg-red-50 dark:bg-red-500/10 dark:text-red-400',
@@ -15,7 +18,17 @@ const dueToneClass: Record<string, string> = {
   normal: 'text-zinc-500 bg-zinc-100 dark:bg-zinc-800 dark:text-zinc-400',
 };
 
-export function TaskRow({ task, tags }: { task: Task; tags: Tag[] }) {
+export function TaskRow({
+  task,
+  tags,
+  subtaskCounts,
+  dragHandle,
+}: {
+  task: Task;
+  tags: Tag[];
+  subtaskCounts: Map<string, SubtaskCount>;
+  dragHandle?: ReactNode;
+}) {
   const selectedTaskId = useUiStore((s) => s.selectedTaskId);
   const selectTask = useUiStore((s) => s.selectTask);
   const toggle = useToggleTask();
@@ -28,6 +41,7 @@ export function TaskRow({ task, tags }: { task: Task; tags: Tag[] }) {
   const taskTags = (task.tagIds ?? []).map((id) => tagMap.get(id)).filter((t): t is Tag => !!t);
   const checklist = task.checklist ?? [];
   const checklistDone = checklist.filter((c) => c.checked).length;
+  const childStat = subtaskCounts.get(task.id);
   const selected = selectedTaskId === task.id;
 
   return (
@@ -45,6 +59,7 @@ export function TaskRow({ task, tags }: { task: Task; tags: Tag[] }) {
           : 'border-transparent hover:border-zinc-200 hover:bg-white hover:shadow-sm dark:hover:border-zinc-800 dark:hover:bg-zinc-800/50',
       )}
     >
+      {dragHandle}
       <button
         type="button"
         aria-label={completed ? '标记为未完成' : '标记为已完成'}
@@ -77,11 +92,22 @@ export function TaskRow({ task, tags }: { task: Task; tags: Tag[] }) {
           )}
         </div>
 
-        {(due || taskTags.length > 0 || checklist.length > 0) && (
+        {(due || taskTags.length > 0 || checklist.length > 0 || childStat || task.recurrenceRule) && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {due && (
               <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-medium', dueToneClass[tone])}>
                 {formatDue(due, task.isAllDay)}
+              </span>
+            )}
+            {task.recurrenceRule && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] text-brand-600 dark:bg-brand-500/10 dark:text-brand-300">
+                <Repeat className="h-3 w-3" />
+              </span>
+            )}
+            {childStat && (
+              <span className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+                <ListChecks className="h-3 w-3" />
+                {childStat.done}/{childStat.total}
               </span>
             )}
             {checklist.length > 0 && (

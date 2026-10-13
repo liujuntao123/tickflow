@@ -1,8 +1,24 @@
 'use client';
 
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import {
   CalendarClock,
+  Check,
   CheckCircle2,
   Inbox,
   Layers,
@@ -14,15 +30,22 @@ import {
 } from 'lucide-react';
 import { useLists, useTags, useFolders } from '@/lib/hooks/use-org';
 import { useView } from '@/lib/hooks/use-views';
-import { useTasksByFolder, useTasksByList, useTasksByTag } from '@/lib/hooks/use-tasks';
+import {
+  useReorderTasks,
+  useSubtaskCounts,
+  useTasksByFolder,
+  useTasksByList,
+  useTasksByTag,
+} from '@/lib/hooks/use-tasks';
 import { useUiStore } from '@/lib/ui-store';
 import { groupTasks } from '@/lib/grouping';
 import { SMART_LIST_LABELS, type SmartListKey } from '@/lib/constants';
-import { cn, endOfDayIso } from '@/lib/utils';
+import { cn, colorToHex, endOfDayIso } from '@/lib/utils';
 import { Dropdown, EmptyState, IconButton, MenuItem, Spinner } from '@/components/ui';
 import { TaskRow } from './task-row';
+import { SortableTaskRow } from './sortable-task-row';
 import { QuickAdd } from './quick-add';
-import { TaskDetail } from './task-detail';
+import { DetailPanel } from './detail-panel';
 import type { GroupBy, Task } from '@/lib/types';
 
 export type ViewSource =
@@ -35,6 +58,7 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: 'list', label: '按清单' },
   { value: 'date', label: '按日期' },
   { value: 'priority', label: '按优先级' },
+  { value: 'quadrant', label: '按四象限' },
 ];
 
 export function TaskWorkspace({ source }: { source: ViewSource }) {
@@ -192,28 +216,69 @@ function Shell({
   const setGroupBy = useUiStore((s) => s.setGroupBy);
   const detailOpen = useUiStore((s) => s.detailOpen);
   const toggleDetail = useUiStore((s) => s.toggleDetail);
-  const setDetailOpen = useUiStore((s) => s.setDetailOpen);
-  const selectedTaskId = useUiStore((s) => s.selectedTaskId);
-
-  // 窄屏抽屉：ESC 关闭（输入控件内按 ESC 不触发）
-  useEffect(() => {
-    if (!detailOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      const el = e.target as HTMLElement | null;
-      if (el && ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) return;
-      if (typeof window !== 'undefined' && window.matchMedia('(min-width: 1024px)').matches) return;
-      setDetailOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [detailOpen, setDetailOpen]);
 
   const { data: lists = [] } = useLists();
   const { data: tags = [] } = useTags();
+  const subtaskCounts = useSubtaskCounts();
+  const reorder = useReorderTasks();
 
-  const groups = useMemo(() => groupTasks(tasks, groupBy, lists), [tasks, groupBy, lists]);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+
+  const visibleTasks = useMemo(
+    () => (tagFilter.length === 0 ? tasks : tasks.filter((t) => (t.tagIds ?? []).some((id) => tagFilter.includes(id)))),
+    [tasks, tagFilter],
+  );
+  const groups = useMemo(() => groupTasks(visibleTasks, groupBy, lists), [visibleTasks, groupBy, lists]);
   const suppressTitle = hideSingleGroupTitle && groupBy === 'list';
+  const canDrag = groupBy === 'list';
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const group = groups.find((g) => g.tasks.some((t) => t.id === active.id));
+    if (!group) return;
+    const ids = group.tasks.map((t) => t.id);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    const listId = group.tasks[from]?.listId;
+    if (!listId) return;
+    reorder.mutate({ listId, orderedIds: arrayMove(ids, from, to) });
+  }
+
+  const renderRow = (task: Task) =>
+    canDrag ? (
+      <SortableTaskRow key={task.id} task={task} tags={tags} subtaskCounts={subtaskCounts} />
+    ) : (
+      <TaskRow key={task.id} task={task} tags={tags} subtaskCounts={subtaskCounts} />
+    );
+
+  const grouped = (
+    <div className="pb-2">
+      {groups.map((group) => (
+        <div key={group.key} className="mb-4">
+          {!suppressTitle && (
+            <div className="mb-1.5 flex items-center gap-2 px-1">
+              <span className="text-[12px] font-semibold text-zinc-400">{group.label}</span>
+              <span className="text-[11px] tabular-nums text-zinc-300 dark:text-zinc-600">{group.tasks.length}</span>
+            </div>
+          )}
+          {canDrag ? (
+            <SortableContext items={group.tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+              <div className="space-y-0.5">{group.tasks.map(renderRow)}</div>
+            </SortableContext>
+          ) : (
+            <div className="space-y-0.5">{group.tasks.map(renderRow)}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-1">
@@ -222,9 +287,54 @@ function Shell({
           <div className="flex min-w-0 items-baseline gap-2">
             <h1 className="truncate text-[17px] font-semibold text-zinc-900 dark:text-zinc-50">{title}</h1>
             {subtitle && <span className="truncate text-[12px] text-zinc-400">{subtitle}</span>}
-            <span className="text-[13px] tabular-nums text-zinc-400">{tasks.length}</span>
+            <span className="text-[13px] tabular-nums text-zinc-400">
+              {tagFilter.length > 0 ? `${visibleTasks.length}/${tasks.length}` : tasks.length}
+            </span>
           </div>
           <div className="flex items-center gap-1.5">
+            <Dropdown
+              trigger={
+                <button
+                  type="button"
+                  className={cn(
+                    'flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] transition-colors',
+                    tagFilter.length > 0
+                      ? 'border-brand-300 bg-brand-50 text-brand-700 dark:border-brand-500/40 dark:bg-brand-500/10 dark:text-brand-300'
+                      : 'border-zinc-200 text-zinc-500 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:bg-zinc-800',
+                  )}
+                >
+                  <TagIcon className="h-3.5 w-3.5" />
+                  标签{tagFilter.length > 0 ? ` · ${tagFilter.length}` : ''}
+                </button>
+              }
+            >
+              {tags.length === 0 ? (
+                <p className="px-2.5 py-1.5 text-[12px] text-zinc-400">暂无标签</p>
+              ) : (
+                <>
+                  {tags.map((tag) => {
+                    const active = tagFilter.includes(tag.id);
+                    return (
+                      <button
+                        key={tag.id}
+                        type="button"
+                        onClick={() =>
+                          setTagFilter((prev) => (active ? prev.filter((x) => x !== tag.id) : [...prev, tag.id]))
+                        }
+                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px] text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                      >
+                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: colorToHex(tag.color) }} />
+                        <span className="flex-1 truncate">{tag.name}</span>
+                        {active && <Check className="h-3.5 w-3.5 text-brand-500" />}
+                      </button>
+                    );
+                  })}
+                  {tagFilter.length > 0 && (
+                    <MenuItem onClick={() => setTagFilter([])}>清除筛选</MenuItem>
+                  )}
+                </>
+              )}
+            </Dropdown>
             <Dropdown
               trigger={
                 <button
@@ -276,25 +386,9 @@ function Shell({
           ) : groups.length === 0 ? (
             <EmptyState icon={emptyIcon} title={emptyTitle} description={emptyDesc} />
           ) : (
-            <div className="pb-2">
-              {groups.map((group) => (
-                <div key={group.key} className="mb-4">
-                  {!suppressTitle && (
-                    <div className="mb-1.5 flex items-center gap-2 px-1">
-                      <span className="text-[12px] font-semibold text-zinc-400">{group.label}</span>
-                      <span className="text-[11px] tabular-nums text-zinc-300 dark:text-zinc-600">
-                        {group.tasks.length}
-                      </span>
-                    </div>
-                  )}
-                  <div className="space-y-0.5">
-                    {group.tasks.map((task) => (
-                      <TaskRow key={task.id} task={task} tags={tags} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              {grouped}
+            </DndContext>
           )}
         </div>
 
@@ -305,42 +399,15 @@ function Shell({
         )}
       </section>
 
-      {detailOpen && (
-        <>
-          {/* 窄屏遮罩：点击收起抽屉（lg 及以上隐藏） */}
-          {selectedTaskId && (
-            <div
-              className="fixed inset-0 z-40 bg-zinc-900/40 backdrop-blur-sm lg:hidden"
-              onClick={() => setDetailOpen(false)}
-              aria-hidden
-            />
-          )}
-          <aside
-            role="dialog"
-            aria-label="任务详情"
-            className={cn(
-              // 窄屏：右侧浮层抽屉
-              'fixed inset-y-0 right-0 z-50 flex w-[360px] max-w-[88vw] flex-col border-l border-zinc-200 bg-white shadow-2xl transition-transform duration-200 ease-out',
-              'dark:border-zinc-800 dark:bg-zinc-900',
-              selectedTaskId
-                ? 'translate-x-0'
-                : 'translate-x-full invisible pointer-events-none lg:visible lg:pointer-events-auto',
-              // ≥1024px：恢复常驻三栏
-              'lg:static lg:z-auto lg:max-w-none lg:translate-x-0 lg:shrink-0 lg:shadow-none lg:transition-none',
-            )}
-          >
-            {selectedTaskId ? (
-              <TaskDetail key={selectedTaskId} taskId={selectedTaskId} />
-            ) : (
-              <EmptyState
-                icon={<Search className="h-7 w-7" />}
-                title="选择任务查看详情"
-                description="点击左侧任意任务，在这里编辑标题、备注、优先级、截止时间、标签与子任务。"
-              />
-            )}
-          </aside>
-        </>
-      )}
+      <DetailPanel
+        empty={
+          <EmptyState
+            icon={<Search className="h-7 w-7" />}
+            title="选择任务查看详情"
+            description="点击左侧任意任务，在这里编辑标题、备注、优先级、截止时间、标签与子任务。"
+          />
+        }
+      />
     </div>
   );
 }

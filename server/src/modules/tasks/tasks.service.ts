@@ -5,7 +5,8 @@ import { PrismaService } from '../../prisma.service';
 import { withSync } from '../../common/sync/seq-allocator';
 import { SERVER_DEVICE } from '../../common/sync/lww';
 import { getInboxListId } from '../org/folders.service';
-import { nextOccurrenceAfter, occurrenceAtOrBefore, validateRecurrence } from '../../common/recurrence';
+import { validateRecurrence } from '../../common/recurrence';
+import { rollRecurringTask } from './task-roll';
 import { TaskCreateDto, TaskQueryDto, TaskUpdateDto } from './tasks.dto';
 
 type Tx = Prisma.TransactionClient;
@@ -280,54 +281,10 @@ export class TasksService {
       if (!task) throw AppException.notFound('任务不存在', 'TASK_NOT_FOUND');
       const now = new Date();
 
-      // 重复任务：按 repeatFrom 求下一次 occurrence，滚动而非置完成
-      if (task.recurrenceRule) {
-        const dtstart = task.recurrenceDtstart ?? task.dueDate ?? task.createdAt;
-        const base = task.repeatFrom === 1 ? now : (task.nextDueDate ?? task.dueDate ?? now);
-        let next: Date | null = null;
-        let occurrence: Date = base;
-        try {
-          next = nextOccurrenceAfter(task.recurrenceRule, dtstart, base);
-          occurrence = occurrenceAtOrBefore(task.recurrenceRule, dtstart, base) ?? base;
-        } catch {
-          next = null;
-        }
-        if (next) {
-          await tx.taskOccurrence.upsert({
-            where: { taskId_occurrenceDate: { taskId: id, occurrenceDate: occurrence } },
-            create: { userId, taskId: id, occurrenceDate: occurrence, completedAt: now },
-            update: { completedAt: now },
-          });
-          await tx.task.update({
-            where: { id },
-            data: {
-              status: 0,
-              dueDate: next,
-              nextDueDate: next,
-              completedAt: null,
-              seq: BigInt(alloc()),
-              lwwAt: now,
-              lwwDevice: SERVER_DEVICE,
-            },
-          });
-          // 子任务按相同 base/next 一并滚动
-          const children = await tx.task.findMany({ where: { userId, parentId: id, deletedAt: null } });
-          for (const child of children) {
-            await tx.task.update({
-              where: { id: child.id },
-              data: {
-                status: 0,
-                dueDate: next,
-                nextDueDate: next,
-                completedAt: null,
-                seq: BigInt(alloc()),
-                lwwAt: now,
-                lwwDevice: SERVER_DEVICE,
-              },
-            });
-          }
-          return { ...(await this.readTask(tx, userId, id)), rolled: true };
-        }
+      // 重复任务：按 repeatFrom 求下一次 occurrence，滚动而非置完成（与 /sync 推送共用）
+      const roll = await rollRecurringTask({ tx, userId, task, alloc, lwwAt: now, lwwDevice: SERVER_DEVICE });
+      if (roll.rolled) {
+        return { ...(await this.readTask(tx, userId, id)), rolled: true };
       }
 
       await tx.task.update({
