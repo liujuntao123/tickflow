@@ -132,3 +132,21 @@ data class TombstoneEntity(
     val type: String,
     val id: String,
 )
+
+/**
+ * 聚合提醒调度表：每个「未完成 + 有到期日 + 有 reminders」的任务一行，
+ * 记录其下一次提醒的绝对时刻（epoch millis）与通知文案。
+ */
+@Entity(tableName = "scheduled_alarms")
+data class ScheduledAlarmEntity(
+    @PrimaryKey val taskId: String,
+    val triggerAt: Long,
+    val title: String,
+    val subtitle: String?,
+)
+
+/** 子任务计数投影。 */
+data class SubtaskCount(
+    val parentId: String,
+    val cnt: Int,
+)

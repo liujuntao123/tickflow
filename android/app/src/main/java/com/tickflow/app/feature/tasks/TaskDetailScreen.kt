@@ -1,5 +1,6 @@
 package com.tickflow.app.feature.tasks
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tickflow.app.core.reminder.RecurrenceEngine
 import com.tickflow.app.core.util.TimeUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,6 +55,7 @@ fun TaskDetailScreen(
     var title by remember(task?.id) { mutableStateOf(task?.title.orEmpty()) }
     var notes by remember(task?.id) { mutableStateOf(task?.notes.orEmpty()) }
     var newSubtask by remember { mutableStateOf("") }
+    var showRecurrence by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -137,6 +140,56 @@ fun TaskDetailScreen(
                 )
             }
 
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "重复",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
+                Text(
+                    text = RecurrenceEngine.describe(task?.recurrenceRule, task?.repeatFrom ?: 0) ?: "不重复",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = { showRecurrence = true },
+                    enabled = task?.dueDate != null,
+                ) {
+                    Text(if (task?.recurrenceRule.isNullOrBlank()) "设置" else "修改")
+                }
+            }
+            if (task?.dueDate == null) {
+                Text(
+                    text = "需先设置截止时间才能开启重复",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            SectionTitle("提醒")
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                viewModel.reminderOptions.forEach { (offset, label) ->
+                    FilterChip(
+                        selected = task?.reminders?.any { it.offset == offset } == true,
+                        onClick = { viewModel.toggleReminder(offset) },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            if (task?.dueDate == null) {
+                Text(
+                    text = "提醒需在设置截止时间后生效",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             if (tags.isNotEmpty()) {
                 Spacer(Modifier.height(16.dp))
                 SectionTitle("标签")
@@ -192,6 +245,17 @@ fun TaskDetailScreen(
                 Text("删除任务", color = MaterialTheme.colorScheme.error)
             }
         }
+    }
+
+    if (showRecurrence) {
+        RecurrenceSheet(
+            task = task,
+            onDismiss = { showRecurrence = false },
+            onSave = { rule, recurrenceEnd, dtstart, repeatFrom ->
+                viewModel.setRecurrence(rule, recurrenceEnd, dtstart, repeatFrom)
+                showRecurrence = false
+            },
+        )
     }
 }
 

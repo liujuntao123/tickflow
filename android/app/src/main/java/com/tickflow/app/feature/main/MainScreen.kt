@@ -21,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -63,12 +64,24 @@ private val bottomItems = listOf(
 )
 
 @Composable
-fun MainScreen(onSync: () -> Unit) {
+fun MainScreen(
+    onSync: () -> Unit,
+    openTaskId: String? = null,
+    onOpenTaskConsumed: () -> Unit = {},
+) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     // 活动级共享 VM：抽屉与任务页共用选中清单状态
     val tasksViewModel: TasksViewModel = hiltViewModel()
+
+    // 通知点击 → 直达任务详情
+    LaunchedEffect(openTaskId) {
+        if (!openTaskId.isNullOrBlank()) {
+            navController.navigate(Routes.taskDetail(openTaskId)) { launchSingleTop = true }
+            onOpenTaskConsumed()
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,

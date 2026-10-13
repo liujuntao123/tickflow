@@ -17,6 +17,7 @@ import com.tickflow.app.core.network.dto.SyncEntityEnvelope
 import com.tickflow.app.core.network.dto.SyncRequest
 import com.tickflow.app.core.network.dto.SyncTombstoneEnvelope
 import com.tickflow.app.core.network.dto.TombstonePush
+import com.tickflow.app.core.reminder.ReminderScheduler
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -50,6 +51,7 @@ class SyncEngine @Inject constructor(
     private val habitDao: HabitDao,
     private val settingsDao: SettingsDao,
     private val tombstoneDao: com.tickflow.app.core.database.TombstoneDao,
+    private val reminderScheduler: ReminderScheduler,
 ) {
     private val mutex = Mutex()
 
@@ -118,6 +120,7 @@ class SyncEngine @Inject constructor(
                 val bootstrap = api.bootstrap()
                 applyEntities(bootstrap.entities)
                 prefs.setCursor(bootstrap.cursor)
+                rescheduleReminders()
                 return SyncOutcome.Success(bootstrap.cursor, 0, 0, fullResync = true)
             }
 
@@ -142,6 +145,10 @@ class SyncEngine @Inject constructor(
             // 应用服务端回包
             val pulled = applyEntities(response.entities)
             applyTombstones(response.tombstones)
+
+            // 重复任务滚动由服务端权威完成（delta 中回传 status=0 + 新 dueDate）；
+            // 这里只需在应用回包后重算提醒
+            rescheduleReminders()
 
             prefs.setCursor(response.cursor)
             SyncOutcome.Success(response.cursor, pushedCount, pulled, fullResync = false)
@@ -220,5 +227,9 @@ class SyncEngine @Inject constructor(
     /** 供本地写入后登记墓碑。 */
     suspend fun addTombstone(type: String, id: String) {
         tombstoneDao.insert(TombstoneEntity(type, id))
+    }
+
+    private suspend fun rescheduleReminders() {
+        runCatching { reminderScheduler.rescheduleAll() }
     }
 }

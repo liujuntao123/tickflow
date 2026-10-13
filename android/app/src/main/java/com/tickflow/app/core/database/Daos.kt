@@ -22,10 +22,10 @@ interface TaskDao {
     @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 0 AND listId = :listId ORDER BY sortOrder ASC")
     fun observeInbox(listId: String): Flow<List<TaskEntity>>
 
-    @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 0 AND parentId IS NULL AND dueDate IS NOT NULL AND dueDate < :beforeIso ORDER BY dueDate ASC")
+    @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 0 AND parentId IS NULL AND COALESCE(nextDueDate, dueDate) IS NOT NULL AND COALESCE(nextDueDate, dueDate) < :beforeIso ORDER BY COALESCE(nextDueDate, dueDate) ASC")
     fun observeToday(beforeIso: String): Flow<List<TaskEntity>>
 
-    @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 0 AND parentId IS NULL AND dueDate IS NOT NULL AND dueDate >= :fromIso AND dueDate < :toIso ORDER BY dueDate ASC")
+    @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 0 AND parentId IS NULL AND COALESCE(nextDueDate, dueDate) IS NOT NULL AND COALESCE(nextDueDate, dueDate) >= :fromIso AND COALESCE(nextDueDate, dueDate) < :toIso ORDER BY COALESCE(nextDueDate, dueDate) ASC")
     fun observeRange(fromIso: String, toIso: String): Flow<List<TaskEntity>>
 
     @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 2 ORDER BY completedAt DESC LIMIT 200")
@@ -48,6 +48,13 @@ interface TaskDao {
 
     @Query("SELECT * FROM tasks WHERE dirty = 1")
     suspend fun dirty(): List<TaskEntity>
+
+    /** 提醒候选：未完成 + 有有效到期 + reminders 非空。 */
+    @Query("SELECT * FROM tasks WHERE deletedPending = 0 AND status = 0 AND reminders IS NOT NULL AND COALESCE(nextDueDate, dueDate) IS NOT NULL")
+    suspend fun reminderCandidates(): List<TaskEntity>
+
+    @Query("SELECT parentId AS parentId, COUNT(*) AS cnt FROM tasks WHERE parentId IS NOT NULL AND deletedPending = 0 GROUP BY parentId")
+    fun observeSubtaskCounts(): Flow<List<SubtaskCount>>
 
     @Query("SELECT COUNT(*) FROM tasks WHERE deletedPending = 0 AND status = 0 AND listId = :listId")
     fun countActiveInList(listId: String): Flow<Int>
@@ -103,6 +110,9 @@ interface ListDao {
 
     @Query("SELECT * FROM lists WHERE isInbox = 1 AND deletedPending = 0 LIMIT 1")
     suspend fun getInbox(): ListEntity?
+
+    @Query("SELECT * FROM lists WHERE deletedPending = 0")
+    suspend fun all(): List<ListEntity>
 
     @Query("SELECT * FROM lists WHERE dirty = 1")
     suspend fun dirty(): List<ListEntity>
@@ -281,5 +291,24 @@ interface TombstoneDao {
     suspend fun deleteByIds(ids: List<String>)
 
     @Query("DELETE FROM tombstones")
+    suspend fun clear()
+}
+
+@Dao
+interface ScheduledAlarmDao {
+
+    @Query("SELECT * FROM scheduled_alarms")
+    suspend fun all(): List<ScheduledAlarmEntity>
+
+    @Query("SELECT * FROM scheduled_alarms ORDER BY triggerAt ASC LIMIT 1")
+    suspend fun next(): ScheduledAlarmEntity?
+
+    @Query("SELECT * FROM scheduled_alarms WHERE triggerAt <= :now ORDER BY triggerAt ASC")
+    suspend fun due(now: Long): List<ScheduledAlarmEntity>
+
+    @Upsert
+    suspend fun upsertAll(alarms: List<ScheduledAlarmEntity>)
+
+    @Query("DELETE FROM scheduled_alarms")
     suspend fun clear()
 }

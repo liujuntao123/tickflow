@@ -52,6 +52,12 @@ class TasksViewModel @Inject constructor(
     val isSyncing: StateFlow<Boolean> = syncEngine.isSyncing
     val syncMessage: StateFlow<String?> = syncEngine.lastMessage
 
+    /** 每个父任务的子任务数量，用于任务行展示。 */
+    val subtaskCounts: StateFlow<Map<String, Int>> =
+        taskRepo.observeSubtaskCounts()
+            .map { counts -> counts.associate { it.parentId to it.cnt } }
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
     val title: StateFlow<String> =
         combine(_smart, _list, inbox) { smart, list, _ ->
             list?.second ?: (smartLists.firstOrNull { it.key == smart }?.label ?: "任务")

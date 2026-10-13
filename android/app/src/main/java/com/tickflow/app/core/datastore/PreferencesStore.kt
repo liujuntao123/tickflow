@@ -43,6 +43,7 @@ class PreferencesStore @Inject constructor(
         val USER_NAME = stringPreferencesKey("user_name")
         val USER_TZ = stringPreferencesKey("user_tz")
         val LOGGED_IN = booleanPreferencesKey("logged_in")
+        val NOTIF_ASKED = booleanPreferencesKey("notif_asked")
     }
 
     val themeFlow: Flow<String> = context.dataStore.data.map { it[Keys.THEME] ?: "system" }
@@ -83,6 +84,13 @@ class PreferencesStore @Inject constructor(
 
     suspend fun setTheme(theme: String) {
         context.dataStore.edit { it[Keys.THEME] = theme }
+    }
+
+    /** 通知运行时权限是否已引导过（仅首次启动引导一次）。 */
+    suspend fun notifAskDone(): Boolean = context.dataStore.data.first()[Keys.NOTIF_ASKED] == true
+
+    suspend fun markNotifAskDone() {
+        context.dataStore.edit { it[Keys.NOTIF_ASKED] = true }
     }
 
     suspend fun saveSession(user: UserDto, accessToken: String, refreshToken: String?) {

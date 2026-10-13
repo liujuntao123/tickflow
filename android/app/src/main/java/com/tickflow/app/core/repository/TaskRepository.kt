@@ -1,10 +1,12 @@
 package com.tickflow.app.core.repository
 
 import com.tickflow.app.core.database.ListDao
+import com.tickflow.app.core.database.SubtaskCount
 import com.tickflow.app.core.database.TaskDao
 import com.tickflow.app.core.database.TaskEntity
 import com.tickflow.app.core.database.TombstoneDao
 import com.tickflow.app.core.database.TombstoneEntity
+import com.tickflow.app.core.reminder.ReminderScheduler
 import com.tickflow.app.core.sync.SyncScheduler
 import com.tickflow.app.core.util.TimeUtils
 import kotlinx.coroutines.flow.Flow
@@ -18,6 +20,7 @@ class TaskRepository @Inject constructor(
     private val listDao: ListDao,
     private val tombstoneDao: TombstoneDao,
     private val syncScheduler: SyncScheduler,
+    private val reminderScheduler: ReminderScheduler,
 ) {
     fun observeByList(listId: String): Flow<List<TaskEntity>> = taskDao.observeByList(listId)
     fun observeActive(): Flow<List<TaskEntity>> = taskDao.observeActive()
@@ -25,8 +28,9 @@ class TaskRepository @Inject constructor(
     fun observeCompleted(): Flow<List<TaskEntity>> = taskDao.observeCompleted()
     fun observeById(id: String): Flow<TaskEntity?> = taskDao.observeById(id)
     fun observeSubtasks(parentId: String): Flow<List<TaskEntity>> = taskDao.observeSubtasks(parentId)
+    fun observeSubtaskCounts(): Flow<List<SubtaskCount>> = taskDao.observeSubtaskCounts()
 
-    /** 今天（含已过期，未完成、有到期日）。 */
+    /** 今天（含已过期，未完成、有有效到期）。 */
     fun observeToday(): Flow<List<TaskEntity>> = taskDao.observeToday(TimeUtils.endOfTodayIso())
 
     /** 未来 7 天（从今天日界起）。 */
@@ -77,7 +81,7 @@ class TaskRepository @Inject constructor(
             deletedPending = false,
         )
         taskDao.upsert(entity)
-        syncScheduler.requestImmediate()
+        afterLocalChange()
         return entity.id
     }
 
@@ -93,6 +97,8 @@ class TaskRepository @Inject constructor(
             isAllDay = false,
             checklist = null,
             recurrenceRule = null,
+            nextDueDate = null,
+            reminders = null,
             tagIds = emptyList(),
             sortOrder = (taskDao.maxSortOrder(parent.listId) ?: 0L) + 1024,
             updatedAt = TimeUtils.nowIso(),
@@ -101,23 +107,33 @@ class TaskRepository @Inject constructor(
             deletedPending = false,
         )
         taskDao.upsert(sub)
-        syncScheduler.requestImmediate()
+        afterLocalChange()
         return id
     }
 
     suspend fun updateTask(task: TaskEntity) {
         taskDao.upsert(task.copy(updatedAt = TimeUtils.nowIso(), dirty = true, deletedPending = false))
-        syncScheduler.requestImmediate()
+        afterLocalChange()
     }
 
+    /**
+     * 勾选完成：仅推送原始完成态（status=2 + completedAt=now）并置 dirty 触发同步。
+     * 重复任务的滚动由**服务端权威**处理（REST complete 与 /sync 推送共用同一实现），
+     * 客户端只消费响应 delta 中回传的滚动结果（status=0 + 新 dueDate/nextDueDate）。
+     */
     suspend fun toggleComplete(task: TaskEntity) {
         val now = TimeUtils.nowIso()
-        if (task.status == 2) {
-            taskDao.setStatus(task.id, 0, null, now)
-        } else {
-            taskDao.setStatus(task.id, 2, now, now)
-        }
-        syncScheduler.requestImmediate()
+        val completed = task.status != 2
+        taskDao.upsert(
+            task.copy(
+                status = if (completed) 2 else 0,
+                completedAt = if (completed) now else null,
+                updatedAt = now,
+                dirty = true,
+                deletedPending = false,
+            )
+        )
+        afterLocalChange()
     }
 
     suspend fun deleteTask(id: String) {
@@ -129,6 +145,12 @@ class TaskRepository @Inject constructor(
             taskDao.markDeleted(sub.id, now)
             tombstoneDao.insert(TombstoneEntity("task", sub.id))
         }
+        afterLocalChange()
+    }
+
+    /** 本地任务集变化后：重算提醒 + 触发同步。 */
+    private suspend fun afterLocalChange() {
+        runCatching { reminderScheduler.rescheduleAll() }
         syncScheduler.requestImmediate()
     }
 }

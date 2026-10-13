@@ -56,6 +56,7 @@ fun TasksScreen(
     val selectedListId by viewModel.selectedListId.collectAsStateWithLifecycle()
     val isSyncing by viewModel.isSyncing.collectAsStateWithLifecycle()
     val syncMessage by viewModel.syncMessage.collectAsStateWithLifecycle()
+    val subtaskCounts by viewModel.subtaskCounts.collectAsStateWithLifecycle()
 
     val tagMap = remember(tags) { tags.associate { it.id to it.name } }
     var showQuickAdd by remember { mutableStateOf(false) }
@@ -137,6 +138,8 @@ fun TasksScreen(
                             TaskRow(
                                 task = task,
                                 tagNames = task.tagIds.mapNotNull { tagMap[it] },
+                                repeatRule = task.recurrenceRule,
+                                subtaskCount = subtaskCounts[task.id] ?: 0,
                                 onToggle = { viewModel.toggleComplete(task) },
                                 onClick = { onOpenTask(task.id) },
                             )

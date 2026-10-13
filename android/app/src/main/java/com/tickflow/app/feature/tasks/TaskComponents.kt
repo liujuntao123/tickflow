@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tickflow.app.core.database.TaskEntity
+import com.tickflow.app.core.database.effectiveDue
 import com.tickflow.app.core.util.TimeUtils
 import com.tickflow.app.ui.theme.DueNormal
 import com.tickflow.app.ui.theme.PriorityHigh
@@ -39,6 +41,8 @@ import com.tickflow.app.ui.theme.PriorityMedium
 fun TaskRow(
     task: TaskEntity,
     tagNames: List<String>,
+    repeatRule: String?,
+    subtaskCount: Int,
     onToggle: () -> Unit,
     onClick: () -> Unit,
 ) {
@@ -83,11 +87,35 @@ fun TaskRow(
                 textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
                 color = if (completed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
             )
-            val hasMeta = task.dueDate != null || tagNames.isNotEmpty()
+            val effectiveDue = task.effectiveDue
+            val hasMeta = effectiveDue != null || tagNames.isNotEmpty() ||
+                !repeatRule.isNullOrBlank() || subtaskCount > 0
             if (hasMeta) {
                 Spacer(Modifier.size(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    task.dueDate?.let { DueChip(it) }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    effectiveDue?.let { DueChip(it) }
+                    if (!repeatRule.isNullOrBlank()) {
+                        Icon(
+                            imageVector = Icons.Filled.Repeat,
+                            contentDescription = "重复任务",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                    if (subtaskCount > 0) {
+                        Text(
+                            text = "子任务 $subtaskCount",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
                     tagNames.take(3).forEach { TagChip(it) }
                 }
             }

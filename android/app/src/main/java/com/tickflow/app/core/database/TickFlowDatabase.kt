@@ -21,8 +21,9 @@ import javax.inject.Singleton
         HabitEntity::class,
         SettingsEntity::class,
         TombstoneEntity::class,
+        ScheduledAlarmEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -34,6 +35,7 @@ abstract class TickFlowDatabase : RoomDatabase() {
     abstract fun habitDao(): HabitDao
     abstract fun settingsDao(): SettingsDao
     abstract fun tombstoneDao(): TombstoneDao
+    abstract fun scheduledAlarmDao(): ScheduledAlarmDao
 }
 
 @Module
@@ -54,4 +56,5 @@ object DatabaseModule {
     @Provides fun provideHabitDao(db: TickFlowDatabase): HabitDao = db.habitDao()
     @Provides fun provideSettingsDao(db: TickFlowDatabase): SettingsDao = db.settingsDao()
     @Provides fun provideTombstoneDao(db: TickFlowDatabase): TombstoneDao = db.tombstoneDao()
+    @Provides fun provideScheduledAlarmDao(db: TickFlowDatabase): ScheduledAlarmDao = db.scheduledAlarmDao()
 }
