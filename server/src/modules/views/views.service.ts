@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { AppException } from '../../common/errors';
 import { PrismaService } from '../../prisma.service';
+import { expandOccurrences } from '../../common/recurrence';
 
 export interface DayBoundaries {
   tz: string;
@@ -191,23 +192,61 @@ export class ViewsService {
 
   async calendar(userId: string, from?: Date, to?: Date) {
     const b = await this.boundaries(userId);
+    const MAX_DAYS = 92;
+    const DAY = 24 * 60 * 60 * 1000;
     const start = from ?? b.todayStart;
-    const end = to ?? new Date(b.todayStart.getTime() + 31 * 24 * 60 * 60 * 1000);
+    const end = to ?? new Date(start.getTime() + 31 * DAY);
     if (end.getTime() <= start.getTime()) throw AppException.badRequest('to 必须晚于 from', 'INVALID_RANGE');
-
-    const tasks = await this.fetchTasks(userId, { status: 0, ...this.effRange(start, end) });
-    const buckets = new Map<string, Record<string, unknown>[]>();
-    for (const t of tasks) {
-      const due = (t.nextDueDate ?? t.dueDate) as Date | null;
-      if (!due) continue;
-      const key = localDate(b.tz, new Date(due));
-      const bucket = buckets.get(key) ?? [];
-      bucket.push(this.toDto(t));
-      buckets.set(key, bucket);
+    if (end.getTime() - start.getTime() > MAX_DAYS * DAY) {
+      throw AppException.badRequest('时间窗口不得超过 92 天', 'RANGE_TOO_LARGE');
     }
+
+    const buckets = new Map<string, Record<string, unknown>[]>();
+    const push = (key: string, item: Record<string, unknown>) => {
+      const bucket = buckets.get(key) ?? [];
+      bucket.push(item);
+      buckets.set(key, bucket);
+    };
+
+    // 非重复任务：dueDate 落在窗口内 → 出现一次
+    const simple = await this.prisma.task.findMany({
+      where: { userId, deletedAt: null, recurrenceRule: null, dueDate: { gte: start, lt: end } },
+      include: { tags: { select: { tagId: true } } },
+    });
+    for (const t of simple) {
+      const key = localDate(b.tz, t.dueDate as Date);
+      push(key, { ...this.toDto(t), occurrenceDate: key, completed: t.status === 2 });
+    }
+
+    // 重复任务：以 recurrenceDtstart 为锚展开（受 UNTIL/COUNT 限制）
+    const recurring = await this.prisma.task.findMany({
+      where: { userId, deletedAt: null, recurrenceRule: { not: null } },
+      include: { tags: { select: { tagId: true } } },
+    });
+    if (recurring.length > 0) {
+      const occs = await this.prisma.taskOccurrence.findMany({
+        where: { userId, taskId: { in: recurring.map((t) => t.id) } },
+      });
+      const doneSet = new Set(occs.map((o) => `${o.taskId}:${localDate(b.tz, o.occurrenceDate)}`));
+      for (const t of recurring) {
+        const rule = t.recurrenceRule as string;
+        const dtstart = (t.recurrenceDtstart ?? t.dueDate ?? t.createdAt) as Date;
+        let dates: Date[] = [];
+        try {
+          dates = expandOccurrences(rule, dtstart, start, end);
+        } catch {
+          dates = [];
+        }
+        for (const d of dates) {
+          const key = localDate(b.tz, d);
+          push(key, { ...this.toDto(t), occurrenceDate: key, completed: doneSet.has(`${t.id}:${key}`) });
+        }
+      }
+    }
+
     const days = [...buckets.entries()]
       .map(([date, list]) => ({ date, tasks: list }))
       .sort((a, b2) => a.date.localeCompare(b2.date));
-    return { days };
+    return { from: start.toISOString(), to: end.toISOString(), days };
   }
 }

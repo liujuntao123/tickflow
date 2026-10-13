@@ -1,0 +1,197 @@
+{
+  "description": "TickFlow RRULE 简化子集定稿测试向量：occurrences 用 expandOccurrences(rule, dtstart, from, to) 展开 [from,to)；nextAfter 用 nextOccurrenceAfter；invalid 必须被 validateRecurrence 拒绝。",
+  "occurrences": [
+    {
+      "name": "daily basic",
+      "rule": "FREQ=DAILY",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "from": "2026-01-05T00:00:00.000Z",
+      "to": "2026-01-10T00:00:00.000Z",
+      "expect": [
+        "2026-01-05T00:00:00.000Z",
+        "2026-01-06T00:00:00.000Z",
+        "2026-01-07T00:00:00.000Z",
+        "2026-01-08T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "daily interval 2",
+      "rule": "FREQ=DAILY;INTERVAL=2",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "from": "2026-01-05T00:00:00.000Z",
+      "to": "2026-01-11T00:00:00.000Z",
+      "expect": [
+        "2026-01-05T00:00:00.000Z",
+        "2026-01-07T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "weekly byday mo,we,fr",
+      "rule": "FREQ=WEEKLY;BYDAY=MO,WE,FR",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "from": "2026-01-05T00:00:00.000Z",
+      "to": "2026-01-19T00:00:00.000Z",
+      "expect": [
+        "2026-01-05T00:00:00.000Z",
+        "2026-01-07T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z",
+        "2026-01-12T00:00:00.000Z",
+        "2026-01-14T00:00:00.000Z",
+        "2026-01-16T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "weekly byday count 4",
+      "rule": "FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=4",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "from": "2026-01-05T00:00:00.000Z",
+      "to": "2026-03-01T00:00:00.000Z",
+      "expect": [
+        "2026-01-05T00:00:00.000Z",
+        "2026-01-07T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z",
+        "2026-01-12T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "weekly byday until inclusive",
+      "rule": "FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=20260112T000000Z",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "from": "2026-01-05T00:00:00.000Z",
+      "to": "2026-12-31T00:00:00.000Z",
+      "expect": [
+        "2026-01-05T00:00:00.000Z",
+        "2026-01-07T00:00:00.000Z",
+        "2026-01-09T00:00:00.000Z",
+        "2026-01-12T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "monthly bymonthday 1",
+      "rule": "FREQ=MONTHLY;BYMONTHDAY=1",
+      "dtstart": "2026-01-01T00:00:00.000Z",
+      "from": "2026-01-01T00:00:00.000Z",
+      "to": "2026-05-01T00:00:00.000Z",
+      "expect": [
+        "2026-01-01T00:00:00.000Z",
+        "2026-02-01T00:00:00.000Z",
+        "2026-03-01T00:00:00.000Z",
+        "2026-04-01T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "monthly bymonthday 15",
+      "rule": "FREQ=MONTHLY;BYMONTHDAY=15",
+      "dtstart": "2026-01-15T00:00:00.000Z",
+      "from": "2026-01-01T00:00:00.000Z",
+      "to": "2026-04-01T00:00:00.000Z",
+      "expect": [
+        "2026-01-15T00:00:00.000Z",
+        "2026-02-15T00:00:00.000Z",
+        "2026-03-15T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "yearly basic",
+      "rule": "FREQ=YEARLY",
+      "dtstart": "2024-03-01T00:00:00.000Z",
+      "from": "2024-01-01T00:00:00.000Z",
+      "to": "2028-01-01T00:00:00.000Z",
+      "expect": [
+        "2024-03-01T00:00:00.000Z",
+        "2025-03-01T00:00:00.000Z",
+        "2026-03-01T00:00:00.000Z",
+        "2027-03-01T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "daily interval 3 count 5",
+      "rule": "FREQ=DAILY;INTERVAL=3;COUNT=5",
+      "dtstart": "2026-02-01T00:00:00.000Z",
+      "from": "2026-02-01T00:00:00.000Z",
+      "to": "2026-03-01T00:00:00.000Z",
+      "expect": [
+        "2026-02-01T00:00:00.000Z",
+        "2026-02-04T00:00:00.000Z",
+        "2026-02-07T00:00:00.000Z",
+        "2026-02-10T00:00:00.000Z",
+        "2026-02-13T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "weekly interval 2 byday tu,th",
+      "rule": "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,TH",
+      "dtstart": "2026-01-06T00:00:00.000Z",
+      "from": "2026-01-06T00:00:00.000Z",
+      "to": "2026-02-15T00:00:00.000Z",
+      "expect": [
+        "2026-01-06T00:00:00.000Z",
+        "2026-01-08T00:00:00.000Z",
+        "2026-01-20T00:00:00.000Z",
+        "2026-01-22T00:00:00.000Z",
+        "2026-02-03T00:00:00.000Z",
+        "2026-02-05T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "window starts mid-series",
+      "rule": "FREQ=DAILY",
+      "dtstart": "2026-01-01T00:00:00.000Z",
+      "from": "2026-03-01T00:00:00.000Z",
+      "to": "2026-03-04T00:00:00.000Z",
+      "expect": [
+        "2026-03-01T00:00:00.000Z",
+        "2026-03-02T00:00:00.000Z",
+        "2026-03-03T00:00:00.000Z"
+      ]
+    },
+    {
+      "name": "weekly single day mo",
+      "rule": "FREQ=WEEKLY;BYDAY=MO",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "from": "2026-01-05T00:00:00.000Z",
+      "to": "2026-02-01T00:00:00.000Z",
+      "expect": [
+        "2026-01-05T00:00:00.000Z",
+        "2026-01-12T00:00:00.000Z",
+        "2026-01-19T00:00:00.000Z",
+        "2026-01-26T00:00:00.000Z"
+      ]
+    }
+  ],
+  "nextAfter": [
+    {
+      "name": "next after wed",
+      "rule": "FREQ=WEEKLY;BYDAY=MO,WE,FR",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "base": "2026-01-07T00:00:00.000Z",
+      "expect": "2026-01-09T00:00:00.000Z"
+    },
+    {
+      "name": "count exhausted returns null",
+      "rule": "FREQ=DAILY;COUNT=3",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "base": "2026-01-07T00:00:00.000Z",
+      "expect": null
+    },
+    {
+      "name": "until exhausted returns null",
+      "rule": "FREQ=WEEKLY;BYDAY=MO;UNTIL=20260119T000000Z",
+      "dtstart": "2026-01-05T00:00:00.000Z",
+      "base": "2026-01-19T00:00:00.000Z",
+      "expect": null
+    }
+  ],
+  "invalid": [
+    { "name": "unsupported freq", "rule": "FREQ=HOURLY" },
+    { "name": "missing freq", "rule": "BYDAY=MO" },
+    { "name": "count and until together", "rule": "FREQ=DAILY;COUNT=2;UNTIL=20260101T000000Z" },
+    { "name": "bymonthday on weekly", "rule": "FREQ=WEEKLY;BYMONTHDAY=1" },
+    { "name": "unknown key", "rule": "FREQ=DAILY;FOO=1" },
+    { "name": "missing freq only interval", "rule": "INTERVAL=2" },
+    { "name": "empty rule", "rule": "" },
+    { "name": "bad until format", "rule": "FREQ=DAILY;UNTIL=2026-01-01" }
+  ]
+}

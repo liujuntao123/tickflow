@@ -11,7 +11,7 @@ Base URL：容器直连 `http://127.0.0.1:3000/api/v1`；Web 经 Next 代理 `/a
   { "error": { "code": "VALIDATION_ERROR", "message": "请求参数校验失败", "details": {} } }
   ```
 
-  常见 `code`：`VALIDATION_ERROR` `AUTH_REQUIRED` `INVALID_TOKEN` `INVALID_CREDENTIALS` `EMAIL_TAKEN` `REFRESH_REPLAY` `NOT_FOUND` `CONFLICT` `RATE_LIMITED`。
+  常见 `code`：`VALIDATION_ERROR` `AUTH_REQUIRED` `INVALID_TOKEN` `INVALID_CREDENTIALS` `EMAIL_TAKEN` `REFRESH_REPLAY` `NOT_FOUND` `CONFLICT` `RATE_LIMITED` `invalid_recurrence`（重复规则不合法）`INVALID_RANGE` / `RANGE_TOO_LARGE`（日历窗口非法或 >92 天）。
 
 - **BigInt → 字符串**：所有响应 JSON 中的 `seq`、`sortOrder` 等 BigInt 字段统一序列化为**字符串**（服务端给 `BigInt.prototype.toJSON` 打了补丁），例如 `"seq": "12"`。客户端解析时按字符串处理，比较时转数字。
 - **时间**：统一 UTC ISO-8601（如 `2026-10-13T03:07:46.324Z`）。日期型字段（习惯）用 `YYYY-MM-DD`。
@@ -127,8 +127,8 @@ access JWT：HS256，payload `{ sub, sid, typ:'access' }`，TTL 由 `ACCESS_TOKE
 | GET | `/tasks/:id` | 含 `tagIds` 与 `subtasks` |
 | PATCH | `/tasks/:id` | 部分更新；`tagIds` 存在时事务内重建关联 |
 | DELETE | `/tasks/:id?hard=true` | 软删并级联软删子任务；`hard=true` 物理删除（含后代） |
-| POST | `/tasks/:id/complete` | `status=2, completedAt=now`；若有 `recurrenceRule` 写 `task_occurrence`（M1 不滚动） |
-| POST | `/tasks/:id/uncomplete` | `status=0, completedAt=null` |
+| POST | `/tasks/:id/complete` | 普通任务：`status=2, completedAt=now`；重复任务：按下文**滚动**（不置完成） |
+| POST | `/tasks/:id/uncomplete` | 有完成历史则删除最近一条 `task_occurrence` 并把 `dueDate/nextDueDate` 回退到它的 `occurrenceDate`；否则仅 `status=0, completedAt=null` |
 | POST | `/tasks/:id/move` | `{ listId, sortOrder? }` |
 | POST | `/tasks/reorder` | `{ listId, parentId?, orderedIds }`，下标 * 1024 |
 | POST | `/tasks/:id/checklist` | `{ checklist: [...] }` 全量替换 |
@@ -143,6 +143,28 @@ access JWT：HS256，payload `{ sub, sid, typ:'access' }`，TTL 由 `ACCESS_TOKE
   "tagIds": ["uuid"], "checklist": [{ "id": "1", "title": "大纲", "checked": false, "sortOrder": 0 }],
   "reminders": [{ "offset": 0 }], "subtasks": [{ "title": "子任务", "priority": 3 }] }
 ```
+
+### 重复任务（RRULE 简化子集，M2）
+
+**白名单语法**（不满足 → `400 { "error": { "code": "invalid_recurrence" } }`）：
+
+```
+FREQ=DAILY|WEEKLY|MONTHLY|YEARLY   必填
+INTERVAL=n                          可选，正整数
+BYDAY=MO,TU,...                     可选，仅 FREQ=WEEKLY
+BYMONTHDAY=n                        可选，仅 FREQ=MONTHLY（|n| ≤ 31）
+COUNT=n  或  UNTIL=YYYYMMDDTHHMMSSZ 二选一
+```
+
+创建/更新时会用 `rrule` 包 parse 一次确认合法。
+
+- **锚点**：设置重复时服务端取任务当前 `dueDate`（无则 `now()`）写入 `recurrenceDtstart`，并**从此不再改变**；`recurrenceTz` 取用户 `timezone`（默认 `Asia/Shanghai`）。清空 `recurrenceRule`（传 `null`）会一并清空 `recurrenceDtstart/recurrenceTz`。
+- **`nextDueDate` 镜像 `dueDate`**：REST 写路径下 `dueDate` 变更时同步镜像 `nextDueDate`（智能清单查询用 `COALESCE(next_due_date, due_date)`，不做惰性推进，逾期重复任务按“已过期”留在今天列表）。
+- **完成滚动**（`POST /tasks/:id/complete`，`repeatFrom` 0=按截止日 1=按完成日）：
+  - `base = repeatFrom==0 ? (nextDueDate ?? dueDate ?? now) : now`；
+  - 用 rrule 求 `base` 之后（严格大于）的第一个 occurrence `next`（受 COUNT/UNTIL 限制）；
+  - 若存在 `next`：写 `task_occurrences(occurrenceDate=base 所在那一次, completedAt=now)`；任务**不置完成**，改为 `status=0, dueDate=next, nextDueDate=next, completedAt=null`，其子任务按同一 `next` 一并滚动；响应任务带 `"rolled": true`。
+  - 若无 `next`（规则结束）：按普通完成处理（`status=2`，`"rolled": false`）。
 
 ---
 
@@ -165,7 +187,17 @@ access JWT：HS256，payload `{ sub, sid, typ:'access' }`，TTL 由 `ACCESS_TOKE
   - `inbox`：收件箱内未完成任务。`all`：所有未完成。`completed`：`status=2`，按 `completedAt` 倒序取最近 200。
   - `matrix`：重要 = `priority ∈ (3,5)`，紧急 = 有效到期 < 今日界 + 2 天，分 `q1`(重要紧急)/`q2`(重要不紧急)/`q3`(紧急不重要)/`q4`(其余)，不含已完成。
 
-- `GET /views/calendar?from&to` → `{ "days": [{ "date": "2026-10-13", "tasks": [...] }] }`（M1 只按有效到期单点聚合未完成任务，重复任务不展开）。
+- `GET /views/calendar?from=<ISO>&to=<ISO>`（**真正展开重复任务**，窗口 ≤ 92 天，超限 `400 RANGE_TOO_LARGE`）→
+
+  ```json
+  { "from": "2026-10-12T16:00:00.000Z", "to": "2027-01-11T16:00:00.000Z",
+    "days": [{ "date": "2026-10-13",
+               "tasks": [{ "...": "完整 task 载荷(+tagIds)", "occurrenceDate": "2026-10-13", "completed": false }] }] }
+  ```
+
+  - 非重复任务：`dueDate` 落在 `[from,to)` → 出现一次（`occurrenceDate` = 本地日期，`completed` = `status===2`）。
+  - 重复任务：以 `recurrenceDtstart` 为锚、rrule 展开到窗口内（受 UNTIL/COUNT 限制），每个 occurrence 一条（同一 task id 可出现多次）；若该 occurrence 在 `task_occurrences` 中有记录（按本地日期匹配）→ `completed: true`。不落库。
+  - 时区：按 `users.timezone` 分组本地日期（以 `recurrenceDtstart` 绝对时刻 + UTC 间隔展开，再归本地日期）。**限制**：对含夏令时的时区会有小时级偏移，v1 不处理。
 - `GET /views/counts` → `{ "inbox": n, "today": n, "tomorrow": n, "next7": n }`。
 
 ---

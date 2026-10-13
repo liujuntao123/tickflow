@@ -261,6 +261,72 @@ async function main() {
   const settingsGet2 = await req('GET', '/settings', { token });
   check('设置持久化', settingsGet2.json?.theme === 'dark');
 
+  // ---------- 10.5) 重复任务 / 日历展开 (M2) ----------
+  const badRule = await req('POST', '/tasks', { token, body: { title: '非法重复', listId, recurrenceRule: 'FREQ=HOURLY' } });
+  check('非法 RRULE → 400 invalid_recurrence', badRule.status === 400 && badRule.json?.error?.code === 'invalid_recurrence', badRule);
+
+  const nextMonday = (() => {
+    const d = new Date();
+    d.setUTCHours(4, 0, 0, 0); // Asia/Shanghai 12:00
+    const delta = (1 - d.getUTCDay() + 7) % 7; // 下一个周一
+    d.setUTCDate(d.getUTCDate() + delta);
+    return d;
+  })();
+  const localKey = (d) =>
+    new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+
+  const recTask = (
+    await req('POST', '/tasks', {
+      token,
+      body: { title: '每周一三五', listId, dueDate: nextMonday.toISOString(), recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO,WE,FR' },
+    })
+  ).json;
+  check('创建每周一三五重复任务', recTask?.recurrenceRule === 'FREQ=WEEKLY;BYDAY=MO,WE,FR', recTask);
+  check('重复任务锚点=dueDate 且 tz 为用户时区', recTask?.recurrenceDtstart === nextMonday.toISOString() && recTask?.recurrenceTz === 'Asia/Shanghai', [recTask?.recurrenceDtstart, recTask?.recurrenceTz]);
+  check('nextDueDate 镜像 dueDate', recTask?.nextDueDate === nextMonday.toISOString(), recTask?.nextDueDate);
+
+  const calFrom = new Date(nextMonday.getTime() - 3600 * 1000);
+  const calTo = new Date(nextMonday.getTime() + 90 * 24 * 3600 * 1000);
+  const calQ = `/views/calendar?from=${calFrom.toISOString()}&to=${calTo.toISOString()}`;
+  const expectedOcc = (() => {
+    let n = 0;
+    for (let i = 0; i < 90; i += 1) {
+      const wd = new Date(nextMonday.getTime() + i * 86400000).getUTCDay();
+      if (wd === 1 || wd === 3 || wd === 5) n += 1;
+    }
+    return n;
+  })();
+  const cal2 = await req('GET', calQ, { token });
+  const occs = (cal2.json?.days ?? []).flatMap((d) => d.tasks).filter((t) => t.id === recTask.id);
+  check('日历 90 天展开数目正确', occs.length === expectedOcc, [occs.length, expectedOcc]);
+  check('日历 occurrenceDate 为本地日期且 completed=false', occs.length > 0 && occs.every((t) => /^\d{4}-\d{2}-\d{2}$/.test(t.occurrenceDate) && t.completed === false), occs[0]?.occurrenceDate);
+  check('日历窗口 >92 天 → 400', (await req('GET', `/views/calendar?from=${calFrom.toISOString()}&to=${new Date(calFrom.getTime() + 100 * 86400000).toISOString()}`, { token })).status === 400);
+
+  const c1 = await req('POST', `/tasks/${recTask.id}/complete`, { token });
+  check('重复任务 complete 滚动(不置完成)', c1.json?.rolled === true && c1.json?.status === 0, [c1.json?.rolled, c1.json?.status]);
+  const next1 = c1.json?.nextDueDate ? new Date(c1.json.nextDueDate) : null;
+  check('due 滚动到下一 occurrence(周三)', next1 && next1.getTime() > nextMonday.getTime() && next1.getUTCDay() === 3, c1.json?.nextDueDate);
+  check('dueDate 与 nextDueDate 同步', c1.json?.dueDate === c1.json?.nextDueDate);
+  const firstKey = localKey(nextMonday);
+  const cal3 = await req('GET', calQ, { token });
+  const firstOccEntry = (cal3.json?.days ?? []).find((d) => d.date === firstKey)?.tasks.find((t) => t.id === recTask.id);
+  check('完成历史 occurrence 入库(completed:true)', firstOccEntry?.completed === true, firstOccEntry);
+  const occs3 = (cal3.json?.days ?? []).flatMap((d) => d.tasks).filter((t) => t.id === recTask.id);
+  check('滚动后展开数目不变(锚点不变)', occs3.length === expectedOcc, [occs3.length, expectedOcc]);
+
+  const u1 = await req('POST', `/tasks/${recTask.id}/uncomplete`, { token });
+  check('uncomplete 回退到原 occurrence', u1.json?.dueDate === nextMonday.toISOString() && u1.json?.status === 0, u1.json?.dueDate);
+  const cal4 = await req('GET', calQ, { token });
+  const firstAfterUn = (cal4.json?.days ?? []).find((d) => d.date === firstKey)?.tasks.find((t) => t.id === recTask.id);
+  check('uncomplete 后 completed 复位', firstAfterUn?.completed === false, firstAfterUn?.completed);
+
+  const onceTask = (
+    await req('POST', '/tasks', { token, body: { title: '一次性重复', listId, dueDate: nextMonday.toISOString(), recurrenceRule: 'FREQ=DAILY;COUNT=1' } })
+  ).json;
+  const onceDone = await req('POST', `/tasks/${onceTask.id}/complete`, { token });
+  check('规则结束按普通完成处理', onceDone.json?.rolled === false && onceDone.json?.status === 2, [onceDone.json?.rolled, onceDone.json?.status]);
+  check('PATCH 非法 RRULE → 400', (await req('PATCH', `/tasks/${taskA.id}`, { token, body: { recurrenceRule: 'FREQ=SECONDLY' } })).status === 400);
+
   // ---------- 11) refresh 轮换 + 重放检测（独立用户，避免影响主会话） ----------
   const email2 = `smoke_rt_${stamp}@example.com`;
   const reg2 = await req('POST', '/auth/register', { body: { email: email2, password, deviceId: 'dev-rt', platform: 'android' } });

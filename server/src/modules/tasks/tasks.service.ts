@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma.service';
 import { withSync } from '../../common/sync/seq-allocator';
 import { SERVER_DEVICE } from '../../common/sync/lww';
 import { getInboxListId } from '../org/folders.service';
+import { nextOccurrenceAfter, occurrenceAtOrBefore, validateRecurrence } from '../../common/recurrence';
 import { TaskCreateDto, TaskQueryDto, TaskUpdateDto } from './tasks.dto';
 
 type Tx = Prisma.TransactionClient;
@@ -82,6 +83,11 @@ export class TasksService {
     return this.readTask(this.prisma as unknown as Tx, userId, id);
   }
 
+  private async userTz(tx: Tx, userId: string): Promise<string> {
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    return user?.timezone || 'Asia/Shanghai';
+  }
+
   private async resolveListId(tx: Tx, userId: string, listId: string | null | undefined): Promise<string> {
     if (listId) {
       const list = await tx.list.findFirst({ where: { id: listId, userId, deletedAt: null } });
@@ -110,6 +116,16 @@ export class TasksService {
       }
       const sortOrder = dto.sortOrder !== undefined ? BigInt(dto.sortOrder) : await this.nextSortOrder(tx, userId, listId, parentId);
       const now = new Date();
+      const dueDate = dto.dueDate ?? null;
+      let recurrenceRule = dto.recurrenceRule ?? null;
+      let recurrenceDtstart = dto.recurrenceDtstart ?? null;
+      let recurrenceTz = dto.recurrenceTz ?? null;
+      if (recurrenceRule) {
+        validateRecurrence(recurrenceRule);
+        // 锚点：设置重复时取当前 dueDate（无则 now），此后不再改变
+        recurrenceDtstart = dueDate ?? now;
+        recurrenceTz = await this.userTz(tx, userId);
+      }
       const task = await tx.task.create({
         data: {
           userId,
@@ -120,16 +136,16 @@ export class TasksService {
           priority: dto.priority ?? 0,
           status: dto.status ?? 0,
           completedAt: dto.completedAt ?? null,
-          dueDate: dto.dueDate ?? null,
+          dueDate,
           isAllDay: dto.isAllDay ?? false,
           startDate: dto.startDate ?? null,
           timezone: dto.timezone ?? null,
-          recurrenceRule: dto.recurrenceRule ?? null,
-          recurrenceTz: dto.recurrenceTz ?? null,
-          recurrenceDtstart: dto.recurrenceDtstart ?? null,
+          recurrenceRule,
+          recurrenceTz,
+          recurrenceDtstart,
           recurrenceEnd: dto.recurrenceEnd ?? null,
           repeatFrom: dto.repeatFrom ?? 0,
-          nextDueDate: dto.nextDueDate ?? null,
+          nextDueDate: dto.nextDueDate ?? dueDate,
           reminders: dto.reminders == null ? undefined : (dto.reminders as Prisma.InputJsonValue),
           reminderRepeatMinutes: dto.reminderRepeatMinutes ?? null,
           checklist: dto.checklist == null ? undefined : (dto.checklist as Prisma.InputJsonValue),
@@ -184,12 +200,27 @@ export class TasksService {
       if (dto.isAllDay !== undefined) data.isAllDay = dto.isAllDay;
       if (dto.startDate !== undefined) data.startDate = dto.startDate;
       if (dto.timezone !== undefined) data.timezone = dto.timezone;
-      if (dto.recurrenceRule !== undefined) data.recurrenceRule = dto.recurrenceRule;
-      if (dto.recurrenceTz !== undefined) data.recurrenceTz = dto.recurrenceTz;
-      if (dto.recurrenceDtstart !== undefined) data.recurrenceDtstart = dto.recurrenceDtstart;
+      if (dto.recurrenceRule !== undefined) {
+        if (dto.recurrenceRule) {
+          validateRecurrence(dto.recurrenceRule);
+          data.recurrenceRule = dto.recurrenceRule;
+          // 锚点一旦设定不再改变
+          data.recurrenceDtstart = existing.recurrenceDtstart ?? dto.dueDate ?? existing.dueDate ?? new Date();
+          data.recurrenceTz = existing.recurrenceTz ?? (await this.userTz(tx, userId));
+        } else {
+          data.recurrenceRule = null;
+          data.recurrenceDtstart = null;
+          data.recurrenceTz = null;
+        }
+      } else {
+        if (dto.recurrenceTz !== undefined) data.recurrenceTz = dto.recurrenceTz;
+        if (dto.recurrenceDtstart !== undefined) data.recurrenceDtstart = dto.recurrenceDtstart;
+      }
       if (dto.recurrenceEnd !== undefined) data.recurrenceEnd = dto.recurrenceEnd;
       if (dto.repeatFrom !== undefined) data.repeatFrom = dto.repeatFrom;
+      // nextDueDate 镜像 dueDate
       if (dto.nextDueDate !== undefined) data.nextDueDate = dto.nextDueDate;
+      else if (dto.dueDate !== undefined) data.nextDueDate = dto.dueDate;
       if (dto.reminderRepeatMinutes !== undefined) data.reminderRepeatMinutes = dto.reminderRepeatMinutes;
       if (dto.reminders !== undefined) data.reminders = dto.reminders === null ? Prisma.DbNull : (dto.reminders as Prisma.InputJsonValue);
       if (dto.checklist !== undefined) data.checklist = dto.checklist === null ? Prisma.DbNull : (dto.checklist as Prisma.InputJsonValue);
@@ -248,19 +279,62 @@ export class TasksService {
       const task = await tx.task.findFirst({ where: { id, userId, deletedAt: null } });
       if (!task) throw AppException.notFound('任务不存在', 'TASK_NOT_FOUND');
       const now = new Date();
+
+      // 重复任务：按 repeatFrom 求下一次 occurrence，滚动而非置完成
+      if (task.recurrenceRule) {
+        const dtstart = task.recurrenceDtstart ?? task.dueDate ?? task.createdAt;
+        const base = task.repeatFrom === 1 ? now : (task.nextDueDate ?? task.dueDate ?? now);
+        let next: Date | null = null;
+        let occurrence: Date = base;
+        try {
+          next = nextOccurrenceAfter(task.recurrenceRule, dtstart, base);
+          occurrence = occurrenceAtOrBefore(task.recurrenceRule, dtstart, base) ?? base;
+        } catch {
+          next = null;
+        }
+        if (next) {
+          await tx.taskOccurrence.upsert({
+            where: { taskId_occurrenceDate: { taskId: id, occurrenceDate: occurrence } },
+            create: { userId, taskId: id, occurrenceDate: occurrence, completedAt: now },
+            update: { completedAt: now },
+          });
+          await tx.task.update({
+            where: { id },
+            data: {
+              status: 0,
+              dueDate: next,
+              nextDueDate: next,
+              completedAt: null,
+              seq: BigInt(alloc()),
+              lwwAt: now,
+              lwwDevice: SERVER_DEVICE,
+            },
+          });
+          // 子任务按相同 base/next 一并滚动
+          const children = await tx.task.findMany({ where: { userId, parentId: id, deletedAt: null } });
+          for (const child of children) {
+            await tx.task.update({
+              where: { id: child.id },
+              data: {
+                status: 0,
+                dueDate: next,
+                nextDueDate: next,
+                completedAt: null,
+                seq: BigInt(alloc()),
+                lwwAt: now,
+                lwwDevice: SERVER_DEVICE,
+              },
+            });
+          }
+          return { ...(await this.readTask(tx, userId, id)), rolled: true };
+        }
+      }
+
       await tx.task.update({
         where: { id },
         data: { status: 2, completedAt: now, seq: BigInt(alloc()), lwwAt: now, lwwDevice: SERVER_DEVICE },
       });
-      if (task.recurrenceRule) {
-        const occurrenceDate = task.nextDueDate ?? task.dueDate ?? now;
-        await tx.taskOccurrence.upsert({
-          where: { taskId_occurrenceDate: { taskId: id, occurrenceDate } },
-          create: { userId, taskId: id, occurrenceDate, completedAt: now },
-          update: { completedAt: now },
-        });
-      }
-      return this.readTask(tx, userId, id);
+      return { ...(await this.readTask(tx, userId, id)), rolled: false };
     });
   }
 
@@ -268,9 +342,31 @@ export class TasksService {
     return withSync(this.prisma, userId, async (tx, alloc) => {
       const task = await tx.task.findFirst({ where: { id, userId, deletedAt: null } });
       if (!task) throw AppException.notFound('任务不存在', 'TASK_NOT_FOUND');
+      const now = new Date();
+      // 存在完成历史 → 删除最近一次并回退到期日
+      const latest = await tx.taskOccurrence.findFirst({
+        where: { userId, taskId: id },
+        orderBy: { occurrenceDate: 'desc' },
+      });
+      if (latest) {
+        await tx.taskOccurrence.delete({ where: { id: latest.id } });
+        await tx.task.update({
+          where: { id },
+          data: {
+            status: 0,
+            completedAt: null,
+            dueDate: latest.occurrenceDate,
+            nextDueDate: latest.occurrenceDate,
+            seq: BigInt(alloc()),
+            lwwAt: now,
+            lwwDevice: SERVER_DEVICE,
+          },
+        });
+        return this.readTask(tx, userId, id);
+      }
       await tx.task.update({
         where: { id },
-        data: { status: 0, completedAt: null, seq: BigInt(alloc()), lwwAt: new Date(), lwwDevice: SERVER_DEVICE },
+        data: { status: 0, completedAt: null, seq: BigInt(alloc()), lwwAt: now, lwwDevice: SERVER_DEVICE },
       });
       return this.readTask(tx, userId, id);
     });
